@@ -1,6 +1,6 @@
-import { ComboBox, ListView, Palette } from "std-widgets.slint";
+import { ComboBox, ListView, Palette, CheckBox } from "std-widgets.slint";
 
-export struct ChannelItem { id: int, number: int, name: string }
+export struct ChannelItem { uuid: string, number: int, name: string, now: string }
 
 export global Theme {
     in property <bool> use-system: false;
@@ -54,7 +54,8 @@ component TField inherits Rectangle {
 
 component SignalMeter inherits Rectangle {
     in property <string> label;
-    in property <float> value; // 0..100
+    in property <float> value; // 0..100, negative = no bar
+    in property <string> text;
     height: 22px;
     HorizontalLayout {
         spacing: 8px;
@@ -62,11 +63,12 @@ component SignalMeter inherits Rectangle {
         Rectangle {
             background: Theme.card; border-radius: 4px;
             Rectangle {
+                visible: root.value >= 0;
                 x: 0; width: parent.width * clamp(root.value / 100, 0, 1); height: parent.height; border-radius: 4px;
                 background: root.value >= 60 ? #a6da95 : (root.value >= 30 ? #eed49f : #ed8796);
             }
         }
-        Text { text: round(root.value) + "%"; color: Theme.fg; width: 40px; vertical-alignment: center; font-size: 12px; horizontal-alignment: right; }
+        Text { text: root.text; color: Theme.fg; width: 64px; vertical-alignment: center; font-size: 12px; horizontal-alignment: right; }
     }
 }
 
@@ -91,17 +93,20 @@ export component MainWindow inherits Window {
     in property <[ChannelItem]> channels;
     in property <string> now-playing;
     in property <string> play-note;
+    in property <bool> has-signal: false;
     in property <float> snr: -1;
     in property <float> ss: -1;
+    in property <string> snr-text;
+    in property <string> ss-text;
     in property <string> server-info;
-    in-out property <string> host: "10.10.10.10";
+    in-out property <string> host;
     in-out property <string> htsp-port: "9982";
-    in-out property <string> http-port: "9981";
+    in-out property <bool> insecure: false;
     in-out property <string> user;
     in-out property <string> password;
 
-    callback connect(string, string, string, string, string);
-    callback play(int);
+    callback connect(string, string, string, string, bool);
+    callback play(string);
     callback stop-playback();
     callback apply-theme(int, int, int);
 
@@ -111,17 +116,18 @@ export component MainWindow inherits Window {
                 alignment: center; padding: 24px; spacing: 10px;
                 Text { text: "TVHme"; color: Theme.acc; font-size: 36px; font-weight: 800; horizontal-alignment: center; }
                 Text { text: "Connect to Tvheadend"; color: Theme.fg-dim; horizontal-alignment: center; }
-                host-edit := TField { placeholder: "Server address"; text <=> root.host; }
+                host-edit := TField { placeholder: "Server, e.g. 10.0.0.5:9981 or https://tv.example.com"; text <=> root.host; }
                 HorizontalLayout {
                     spacing: 8px;
-                    TField { placeholder: "HTSP port"; text <=> root.htsp-port; kind: InputType.number; }
-                    TField { placeholder: "HTTP port"; text <=> root.http-port; kind: InputType.number; }
+                    Text { text: "HTSP port (signal)"; color: Theme.fg-dim; vertical-alignment: center; }
+                    TField { placeholder: "9982"; text <=> root.htsp-port; kind: InputType.number; }
                 }
                 user-edit := TField { placeholder: "Username"; text <=> root.user; }
                 pass-edit := TField { placeholder: "Password"; kind: InputType.password; text <=> root.password; }
+                CheckBox { text: "Allow self-signed certificate"; checked <=> root.insecure; }
                 TButton {
                     text: root.busy ? "Connecting…" : "Connect"; primary: true; enabled: !root.busy;
-                    clicked => { root.connect(root.host, root.htsp-port, root.http-port, root.user, root.password); }
+                    clicked => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure); }
                 }
                 if root.error != "": Text { text: root.error; color: Theme.c-bad; wrap: word-wrap; horizontal-alignment: center; }
                 TButton { text: "Appearance"; clicked => { root.screen = 2; } }
@@ -140,28 +146,32 @@ export component MainWindow inherits Window {
             }
             ListView {
                 for ch in root.channels: Rectangle {
-                    height: 48px;
+                    height: 56px;
                     background: ta.has-hover ? Theme.card-hi : transparent;
                     HorizontalLayout {
-                        padding-left: 16px; spacing: 12px;
+                        padding-left: 16px; padding-right: 12px; spacing: 12px;
                         Text { text: ch.number; color: Theme.fg-dim; width: 36px; vertical-alignment: center; }
-                        Text { text: ch.name; color: Theme.fg; vertical-alignment: center; }
+                        VerticalLayout {
+                            alignment: center; horizontal-stretch: 1;
+                            Text { text: ch.name; color: Theme.fg; overflow: elide; }
+                            if ch.now != "": Text { text: ch.now; color: Theme.fg-dim; font-size: 12px; overflow: elide; }
+                        }
                     }
-                    ta := TouchArea { clicked => { root.play(ch.id); } }
+                    ta := TouchArea { clicked => { root.play(ch.uuid); } }
                 }
             }
             if root.now-playing != "": Rectangle {
-                background: Theme.bar; height: 124px;
+                background: Theme.bar; height: 128px;
                 VerticalLayout {
                     padding: 12px; spacing: 6px;
                     HorizontalLayout {
                         Text { text: root.now-playing; color: Theme.fg; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; }
                         TButton { text: "Stop"; clicked => { root.stop-playback(); } }
                     }
-                    if root.snr >= 0: SignalMeter { label: "SNR"; value: root.snr; }
-                    if root.ss >= 0: SignalMeter { label: "SS"; value: root.ss; }
+                    if root.has-signal && root.snr-text != "": SignalMeter { label: "SNR"; value: root.snr; text: root.snr-text; }
+                    if root.has-signal && root.ss-text != "": SignalMeter { label: "SS"; value: root.ss; text: root.ss-text; }
                     if root.play-note != "": Text { text: root.play-note; color: Theme.c-warn; font-size: 12px; }
-                    if root.snr < 0 && root.ss < 0: Text { text: "Waiting for signal info…"; color: Theme.fg-dim; font-size: 12px; }
+                    if !root.has-signal && root.play-note == "": Text { text: "Waiting for signal info…"; color: Theme.fg-dim; font-size: 12px; }
                 }
             }
         }

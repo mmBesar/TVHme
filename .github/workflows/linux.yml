@@ -13,18 +13,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 22.04 keeps the glibc requirement low so the binary runs on older distros too.
-          - os: ubuntu-22.04
+          - os: ubuntu-24.04
             arch: amd64
             appimage_arch: x86_64
-          - os: ubuntu-22.04-arm
+          - os: ubuntu-24.04-arm
             arch: arm64
             appimage_arch: aarch64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}
       - name: System libraries
         run: |
           sudo apt-get update
@@ -54,7 +55,7 @@ jobs:
           chmod +x appimagetool
           ./appimagetool AppDir "TVHme-${{ matrix.appimage_arch }}.AppImage"
           ls -la *.AppImage
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: tvhme-linux-${{ matrix.arch }}
           path: |
@@ -62,7 +63,7 @@ jobs:
             TVHme-${{ matrix.appimage_arch }}.AppImage
       - name: Release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             tvhme-linux-${{ matrix.arch }}.tar.gz

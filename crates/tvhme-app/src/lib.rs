@@ -2,8 +2,8 @@ slint::include_modules!();
 
 use slint::{Color, ModelRc, VecModel};
 use std::sync::{Arc, OnceLock};
-use tvhme_core::session::Session;
-use tvhme_core::stream::Server;
+use tvhme_core::session::{ConnectOptions, Session, SignalSource, SignalWatch};
+use tvhme_core::signal::SignalStatus;
 use tvhme_core::theme::{Accent, Flavor, ThemeChoice};
 
 fn rt() -> &'static tokio::runtime::Runtime {
@@ -55,11 +55,25 @@ fn open_player(url: &str) -> Result<(), String> {
     }
 }
 
+fn signal_texts(s: &SignalStatus) -> (f32, String, f32, String) {
+    let snr = match (s.snr_pct, s.snr_db) {
+        (Some(p), _) => (p, format!("{:.0}%", p)),
+        (None, Some(db)) => ((db / 30.0 * 100.0).clamp(0.0, 100.0), format!("{db:.1} dB")),
+        _ => (-1.0, String::new()),
+    };
+    let ss = match (s.signal_pct, s.signal_db) {
+        (Some(p), _) => (p, format!("{:.0}%", p)),
+        (None, Some(db)) => (-1.0, format!("{db:.1} dB")), // no known full-scale for absolute signal: text only
+        _ => (-1.0, String::new()),
+    };
+    (snr.0, snr.1, ss.0, ss.1)
+}
+
 pub fn run() -> Result<(), slint::PlatformError> {
     let ui = MainWindow::new()?;
     apply_theme(&ui, ThemeChoice::default());
     let session: Arc<tokio::sync::Mutex<Option<Arc<Session>>>> = Default::default();
-    let watcher: Arc<std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>> = Default::default();
+    let watch: Arc<std::sync::Mutex<Option<(SignalWatch, tokio::task::JoinHandle<()>)>>> = Default::default();
 
     ui.on_apply_theme({
         let w = ui.as_weak();
@@ -69,29 +83,28 @@ pub fn run() -> Result<(), slint::PlatformError> {
     ui.on_connect({
         let w = ui.as_weak();
         let session = session.clone();
-        move |host, htsp, http, user, pass| {
-            let (host, user, pass) = (host.to_string(), user.to_string(), pass.to_string());
-            let (htsp, http) = (htsp.parse::<u16>().unwrap_or(9982), http.parse::<u16>().unwrap_or(9981));
+        move |address, htsp, user, pass, insecure| {
             if let Some(ui) = w.upgrade() { ui.set_busy(true); ui.set_error("".into()); }
+            let opts = ConnectOptions {
+                address: address.to_string(), user: user.to_string(), pass: pass.to_string(),
+                htsp_port: htsp.parse::<u16>().ok(), insecure_tls: insecure,
+            };
             let (w, session) = (w.clone(), session.clone());
             rt().spawn(async move {
-                let server = Server::new(host.clone(), htsp, http);
-                let res = Session::connect(server, &user, &pass).await;
-                let w0 = w.clone();
-                let _ = slint::invoke_from_event_loop(move || {
-                    let Some(ui) = w0.upgrade() else { return };
-                    ui.set_busy(false);
-                });
+                let res = Session::connect(opts.clone()).await;
                 match res {
                     Ok(s) => {
                         let s = Arc::new(s);
-                        let items: Vec<ChannelItem> = s.channels.iter()
-                            .map(|c| ChannelItem { id: c.id as i32, number: c.number as i32, name: c.name.clone().into() }).collect();
+                        let items: Vec<ChannelItem> = s.channels.iter().map(|c| ChannelItem {
+                            uuid: c.uuid.clone().into(), number: c.number as i32, name: c.name.clone().into(),
+                            now: c.now.as_ref().map(|n| n.title.clone()).unwrap_or_default().into(),
+                        }).collect();
                         let admin = s.permissions.admin;
-                        let info = format!("Connected to {host} as {user}");
+                        let info = format!("Connected to {} as {}{}", s.api.addr.base_url(), opts.user, if s.has_htsp() { "" } else { " (HTSP not reachable: live signal only for admins)" });
                         *session.lock().await = Some(s);
                         let _ = slint::invoke_from_event_loop(move || {
                             let Some(ui) = w.upgrade() else { return };
+                            ui.set_busy(false);
                             ui.set_channels(ModelRc::new(VecModel::from(items)));
                             ui.set_is_admin(admin);
                             ui.set_server_info(info.into());
@@ -101,7 +114,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                     Err(e) => {
                         let msg = e.to_string();
                         let _ = slint::invoke_from_event_loop(move || {
-                            if let Some(ui) = w.upgrade() { ui.set_error(msg.into()); }
+                            if let Some(ui) = w.upgrade() { ui.set_busy(false); ui.set_error(msg.into()); }
                         });
                     }
                 }
@@ -110,63 +123,69 @@ pub fn run() -> Result<(), slint::PlatformError> {
     });
 
     ui.on_play({
-        let (w, session, watcher) = (ui.as_weak(), session.clone(), watcher.clone());
-        move |id| {
-            let (w, session, watcher) = (w.clone(), session.clone(), watcher.clone());
+        let (w, session, watch) = (ui.as_weak(), session.clone(), watch.clone());
+        move |uuid| {
+            let (w, session, watch) = (w.clone(), session.clone(), watch.clone());
+            let uuid = uuid.to_string();
             rt().spawn(async move {
                 let Some(s) = session.lock().await.clone() else { return };
-                let id = id as u32;
-                let name = s.channels.iter().find(|c| c.id == id).map(|c| c.name.clone()).unwrap_or_default();
-                if let Some(h) = watcher.lock().unwrap().take() { h.abort(); }
-                let _ = s.stop_signal(1).await;
+                let name = s.channels.iter().find(|c| c.uuid == uuid).map(|c| c.name.clone()).unwrap_or_default();
+                drop(watch.lock().unwrap().take()); // stops the previous subscription/poller
                 let w2 = w.clone();
                 let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = w2.upgrade() { ui.set_now_playing(name.into()); ui.set_play_note("".into()); ui.set_snr(-1.0); ui.set_ss(-1.0); }
+                    if let Some(ui) = w2.upgrade() { ui.set_now_playing(name.into()); ui.set_play_note("".into()); ui.set_has_signal(false); }
                 });
-                if let Err(e) = open_player(&s.stream_url(id)) {
+                if let Err(e) = open_player(&s.stream_url(&uuid)) {
                     let w2 = w.clone();
                     let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = w2.upgrade() { ui.set_play_note(format!("{e}").into()); }
+                        if let Some(ui) = w2.upgrade() { ui.set_play_note(e.into()); }
                     });
                 }
-                if let Ok(mut rx) = s.watch_signal(id, 1).await {
-                    let h = tokio::spawn(async move {
-                        while let Ok(st) = rx.recv().await {
-                            let w = w.clone();
-                            let _ = slint::invoke_from_event_loop(move || {
-                                if let Some(ui) = w.upgrade() {
-                                    ui.set_snr(st.snr_pct.unwrap_or(-1.0));
-                                    ui.set_ss(st.signal_pct.unwrap_or(-1.0));
-                                }
-                            });
-                        }
+                let sw = s.watch_signal(&uuid, 1).await;
+                if sw.source == SignalSource::Unavailable {
+                    let w2 = w.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = w2.upgrade() { ui.set_play_note("Signal info needs HTSP access or an admin account".into()); }
                     });
-                    *watcher.lock().unwrap() = Some(h);
                 }
+                let mut rx = sw.rx.clone();
+                let h = tokio::spawn(async move {
+                    while rx.changed().await.is_ok() {
+                        let Some(st) = rx.borrow().clone() else { continue };
+                        let (snr, snr_t, ss, ss_t) = signal_texts(&st);
+                        let w = w.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = w.upgrade() {
+                                ui.set_snr(snr); ui.set_ss(ss);
+                                ui.set_snr_text(snr_t.into()); ui.set_ss_text(ss_t.into());
+                                ui.set_has_signal(true);
+                            }
+                        });
+                    }
+                });
+                *watch.lock().unwrap() = Some((sw, h));
             });
         }
     });
 
     ui.on_stop_playback({
-        let (w, session, watcher) = (ui.as_weak(), session.clone(), watcher.clone());
+        let (w, watch) = (ui.as_weak(), watch.clone());
         move || {
-            if let Some(h) = watcher.lock().unwrap().take() { h.abort(); }
-            if let Some(ui) = w.upgrade() { ui.set_now_playing("".into()); }
-            let session = session.clone();
-            rt().spawn(async move { if let Some(s) = session.lock().await.clone() { let _ = s.stop_signal(1).await; } });
+            if let Some((_sw, h)) = watch.lock().unwrap().take() { h.abort(); }
+            if let Some(ui) = w.upgrade() { ui.set_now_playing("".into()); ui.set_has_signal(false); }
         }
     });
 
-    // Developer aid: TVHME_AUTOCONNECT=host,htsp,http,user,pass[,play_channel_id]
+    // Developer aid: TVHME_AUTOCONNECT=address,htsp_port,user,pass[,play_channel_uuid]
     if let Ok(v) = std::env::var("TVHME_AUTOCONNECT") {
         let p: Vec<String> = v.split(',').map(str::to_string).collect();
-        if p.len() >= 5 {
-            ui.invoke_connect(p[0].clone().into(), p[1].clone().into(), p[2].clone().into(), p[3].clone().into(), p[4].clone().into());
-            if let Some(ch) = p.get(5).and_then(|c| c.parse::<i32>().ok()) {
+        if p.len() >= 4 {
+            ui.invoke_connect(p[0].clone().into(), p[1].clone().into(), p[2].clone().into(), p[3].clone().into(), false);
+            if let Some(ch) = p.get(4).cloned() {
                 let w = ui.as_weak();
                 rt().spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-                    let _ = slint::invoke_from_event_loop(move || { if let Some(ui) = w.upgrade() { ui.invoke_play(ch); } });
+                    let _ = slint::invoke_from_event_loop(move || { if let Some(ui) = w.upgrade() { ui.invoke_play(ch.into()); } });
                 });
             }
         }
