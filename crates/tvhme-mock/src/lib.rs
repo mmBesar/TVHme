@@ -92,6 +92,10 @@ async fn htsp_conn(stream: TcpStream) {
                         if send(&mut wr, d).await.is_err() { return; }
                         continue;
                     }
+                    "getTicket" => {
+                        r.insert("path".into(), s(&format!("/stream/channelid/{}", req.i64("channelId").unwrap_or(0))));
+                        r.insert("ticket".into(), s("TICKET123"));
+                    }
                     "subscribe" => { sub = req.i64("subscriptionId"); r.insert("timeshiftPeriod".into(), n(0)); }
                     "unsubscribe" => { sub = None; }
                     _ => { r.insert("error".into(), s("Unknown method")); }
@@ -142,9 +146,12 @@ async fn http_conn(mut stream: TcpStream, webroot: String) {
     let path_q = match full_path.strip_prefix(webroot.as_str()) { Some(p) if p.starts_with('/') => p.to_string(), _ => String::new() };
     let path = path_q.split('?').next().unwrap_or("").to_string();
 
+    let ticket_ok = path.starts_with("/stream/channelid/") && path_q.contains("ticket=TICKET123");
     let json_ok = |v: String| ("200 OK", "application/json", v.into_bytes());
     let (code, ctype, body): (&str, &str, Vec<u8>) = if path.is_empty() {
         ("404 Not Found", "text/plain", b"not found".to_vec())
+    } else if ticket_ok {
+        ("200 OK", "video/mp2t", b"MOCK-TS-DATA".to_vec())
     } else if admin.is_none() {
         ("401 Unauthorized", "text/plain", b"unauthorized".to_vec())
     } else {

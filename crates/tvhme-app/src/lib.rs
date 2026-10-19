@@ -135,7 +135,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = w2.upgrade() { ui.set_now_playing(name.into()); ui.set_play_note("".into()); ui.set_has_signal(false); }
                 });
-                if let Err(e) = open_player(&s.stream_url(&uuid)) {
+                if let Err(e) = open_player(&s.playback_url(&uuid).await) {
                     let w2 = w.clone();
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = w2.upgrade() { ui.set_play_note(e.into()); }

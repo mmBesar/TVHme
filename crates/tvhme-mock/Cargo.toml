@@ -8,3 +8,6 @@ license.workspace = true
 tvhme-core = { path = "../tvhme-core" }
 tokio = { workspace = true }
 sha1 = { workspace = true }
+
+[dev-dependencies]
+reqwest = { workspace = true }

@@ -94,3 +94,24 @@ async fn htsp_signal_for_normal_user() {
     assert!((st.snr_pct.unwrap() - 75.0).abs() < 0.1);
     assert!((st.signal_pct.unwrap() - 50.0).abs() < 0.1);
 }
+
+#[tokio::test]
+async fn playback_url_uses_a_ticket_not_the_password_and_it_works() {
+    let m = tvhme_mock::spawn().await;
+    let s = Session::connect(opts(addr(&m), "user", "user", Some(m.htsp.port()))).await.unwrap();
+    let url = s.playback_url("uuid-two").await;
+    assert!(url.contains("ticket=TICKET123") && url.contains("/stream/channelid/101"), "{url}");
+    assert!(!url.contains("user:user@"), "{url}");
+    // No credentials at all: the ticket alone must be accepted.
+    let r = reqwest::Client::new().get(&url).send().await.unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    assert_eq!(&r.bytes().await.unwrap()[..], b"MOCK-TS-DATA");
+}
+
+#[tokio::test]
+async fn playback_url_falls_back_to_credentials_without_htsp() {
+    let m = tvhme_mock::spawn_with("", false).await;
+    let s = Session::connect(opts(addr(&m), "user", "user", Some(m.htsp.port()))).await.unwrap();
+    let url = s.playback_url("uuid-one").await;
+    assert!(url.starts_with("http://user:user@127.0.0.1:") && url.contains("/stream/channel/uuid-one"), "{url}");
+}

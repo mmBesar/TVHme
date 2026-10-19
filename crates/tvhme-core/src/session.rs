@@ -109,7 +109,26 @@ impl Session {
 
     pub fn has_htsp(&self) -> bool { self.htsp.is_some() }
 
+    /// Credentials-in-URL fallback (`/stream/channel/<uuid>`). Prefer `playback_url`.
     pub fn stream_url(&self, uuid: &str) -> String { self.api.stream_url(uuid) }
+
+    /// Preferred playback URL. As tvhclient does, ask the server for a one-time ticket over HTSP
+    /// (`getTicket`) and play `<base><path>?ticket=..&profile=pass`, so no password is put in the URL.
+    /// Falls back to the credentials URL when HTSP is not reachable or the server refuses.
+    pub async fn playback_url(&self, uuid: &str) -> String {
+        if let Some(h) = &self.htsp {
+            if let Some(&cid) = h.ids.get(uuid) {
+                let mut f = Map::new();
+                f.insert("channelId".into(), Value::S64(cid as i64));
+                if let Ok(r) = h.client.request("getTicket", f).await {
+                    if let (Some(path), Some(ticket)) = (r.str("path"), r.str("ticket")) {
+                        return format!("{}{}?ticket={}&profile=pass", self.api.addr.base_url(), path, ticket);
+                    }
+                }
+            }
+        }
+        self.stream_url(uuid)
+    }
 
     /// Start watching signal for a channel. Order: HTSP (any account) -> `status/inputs` (admin) -> unavailable.
     /// Dropping the returned value stops the subscription/polling.
