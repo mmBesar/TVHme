@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/tvhme-core", "crates/tvhme-mock"]
+members = ["crates/tvhme-core", "crates/tvhme-mock", "crates/tvhme-app"]
 
 [workspace.package]
 version = "0.1.0"

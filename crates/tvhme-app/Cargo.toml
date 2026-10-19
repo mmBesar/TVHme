@@ -1,0 +1,35 @@
+[package]
+name = "tvhme-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["lib", "cdylib"]
+
+[[bin]]
+name = "tvhme"
+path = "src/main.rs"
+
+[dependencies]
+tvhme-core = { path = "../tvhme-core" }
+tokio = { workspace = true }
+slint = "1.18"
+
+[target.'cfg(target_os = "android")'.dependencies]
+slint = { version = "1.18", features = ["backend-android-activity-06"] }
+
+[build-dependencies]
+slint-build = "1.18"
+
+[package.metadata.android]
+package = "io.github.mmbesar.tvhme"
+build_targets = ["aarch64-linux-android", "armv7-linux-androideabi", "x86_64-linux-android"]
+apk_name = "TVHme"
+
+[package.metadata.android.sdk]
+min_sdk_version = 26
+target_sdk_version = 34
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.INTERNET"

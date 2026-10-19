@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1e3a8a"/>
+      <stop offset="1" stop-color="#0b1f5c"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <!-- TV screen -->
+  <rect x="96" y="150" width="320" height="214" rx="32" fill="none" stroke="#ffffff" stroke-width="22"/>
+  <!-- antenna -->
+  <path d="M196 100 L256 150 L316 100" fill="none" stroke="#ffffff" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- play triangle -->
+  <path d="M230 214 L230 300 L304 257 Z" fill="#f97316"/>
+  <!-- signal bars -->
+  <rect x="150" y="400" width="26" height="30" rx="6" fill="#f97316"/>
+  <rect x="193" y="388" width="26" height="42" rx="6" fill="#f97316"/>
+  <rect x="236" y="376" width="26" height="54" rx="6" fill="#ffffff"/>
+</svg>

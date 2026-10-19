@@ -1,0 +1,44 @@
+name: Linux
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: System libraries
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libgl1-mesa-dev
+      - name: Test core and mock
+        run: cargo test -p tvhme-core -p tvhme-mock
+      - name: Build app
+        run: cargo build --release -p tvhme-app --bin tvhme
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp target/release/tvhme dist/tvhme-linux-${{ matrix.arch }}
+          cp assets/icon.svg dist/tvhme.svg
+          tar czf tvhme-linux-${{ matrix.arch }}.tar.gz -C dist .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tvhme-linux-${{ matrix.arch }}
+          path: tvhme-linux-${{ matrix.arch }}.tar.gz
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: tvhme-linux-${{ matrix.arch }}.tar.gz
