@@ -16,9 +16,10 @@ fn col(c: u32) -> Color { Color::from_rgb_u8((c >> 16) as u8, (c >> 8) as u8, c 
 pub fn apply_theme(ui: &MainWindow, choice: ThemeChoice) {
     let t = ui.global::<Theme>();
     match choice.colors() {
-        None => t.set_use_system(true),
+        None => { t.set_use_system(true); }
         Some(c) => {
             t.set_use_system(false);
+            t.set_dark(c.dark);
             t.set_accent(col(c.accent));
             t.set_c_text(col(c.text));
             t.set_c_subtext(col(c.subtext));
@@ -68,12 +69,13 @@ pub fn run() -> Result<(), slint::PlatformError> {
     ui.on_connect({
         let w = ui.as_weak();
         let session = session.clone();
-        move |host, user, pass| {
+        move |host, htsp, http, user, pass| {
             let (host, user, pass) = (host.to_string(), user.to_string(), pass.to_string());
+            let (htsp, http) = (htsp.parse::<u16>().unwrap_or(9982), http.parse::<u16>().unwrap_or(9981));
             if let Some(ui) = w.upgrade() { ui.set_busy(true); ui.set_error("".into()); }
             let (w, session) = (w.clone(), session.clone());
             rt().spawn(async move {
-                let server = Server::new(host.clone(), 9982, 9981);
+                let server = Server::new(host.clone(), htsp, http);
                 let res = Session::connect(server, &user, &pass).await;
                 let w0 = w.clone();
                 let _ = slint::invoke_from_event_loop(move || {
@@ -119,12 +121,12 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 let _ = s.stop_signal(1).await;
                 let w2 = w.clone();
                 let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = w2.upgrade() { ui.set_now_playing(name.into()); ui.set_snr(-1.0); ui.set_ss(-1.0); }
+                    if let Some(ui) = w2.upgrade() { ui.set_now_playing(name.into()); ui.set_play_note("".into()); ui.set_snr(-1.0); ui.set_ss(-1.0); }
                 });
                 if let Err(e) = open_player(&s.stream_url(id)) {
                     let w2 = w.clone();
                     let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = w2.upgrade() { ui.set_now_playing(format!("{e}").into()); }
+                        if let Some(ui) = w2.upgrade() { ui.set_play_note(format!("{e}").into()); }
                     });
                 }
                 if let Ok(mut rx) = s.watch_signal(id, 1).await {
@@ -155,6 +157,20 @@ pub fn run() -> Result<(), slint::PlatformError> {
         }
     });
 
+    // Developer aid: TVHME_AUTOCONNECT=host,htsp,http,user,pass[,play_channel_id]
+    if let Ok(v) = std::env::var("TVHME_AUTOCONNECT") {
+        let p: Vec<String> = v.split(',').map(str::to_string).collect();
+        if p.len() >= 5 {
+            ui.invoke_connect(p[0].clone().into(), p[1].clone().into(), p[2].clone().into(), p[3].clone().into(), p[4].clone().into());
+            if let Some(ch) = p.get(5).and_then(|c| c.parse::<i32>().ok()) {
+                let w = ui.as_weak();
+                rt().spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                    let _ = slint::invoke_from_event_loop(move || { if let Some(ui) = w.upgrade() { ui.invoke_play(ch); } });
+                });
+            }
+        }
+    }
     ui.run()
 }
 

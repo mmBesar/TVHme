@@ -9,6 +9,6 @@ license = "GPL-3.0-or-later"
 repository = "https://github.com/mmBesar/TVHme"
 
 [workspace.dependencies]
-tokio = { version = "1", features = ["net", "io-util", "rt-multi-thread", "macros", "sync", "time"] }
+tokio = { version = "1", features = ["net", "io-util", "rt-multi-thread", "macros", "sync", "time", "signal"] }
 sha1 = "0.10"
 thiserror = "1"
