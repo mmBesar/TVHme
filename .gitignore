@@ -3,3 +3,8 @@
 *.aab
 .gradle/
 local.properties
+
+# Private working notes and review files (not part of the project)
+/notes/
+docs/VERIFICATION.md
+*.bundle

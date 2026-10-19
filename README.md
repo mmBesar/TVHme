@@ -6,11 +6,11 @@ A modern Tvheadend client for Linux and Android. Rust core, Slint UI.
 - Playback uses Tvheadend's HTTP stream; signal (SNR/SS %) comes from HTSP `signalStatus`.
 - Catppuccin themes (default Macchiato + Mauve), AMOLED black, system look.
 
-Status: early development. See `docs/VERIFICATION.md` for what is verified.
+Status: early development.
 
 ## Install
 
-**NixOS / Nix** (recommended on NixOS: the app loads Wayland/X11/GL libraries at runtime, and the package wraps them in):
+**NixOS / Nix** (the app loads Wayland/X11/GL libraries at runtime and the package wraps them in; it builds from source, so expect a large first download):
 
     nix run github:mmBesar/TVHme
 
