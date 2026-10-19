@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["crates/tvhme-core", "crates/tvhme-mock"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/mmBesar/TVHme"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["net", "io-util", "rt-multi-thread", "macros", "sync", "time"] }
+sha1 = "0.10"
+thiserror = "1"

@@ -1,0 +1,10 @@
+[package]
+name = "tvhme-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+sha1 = { workspace = true }
+thiserror = { workspace = true }

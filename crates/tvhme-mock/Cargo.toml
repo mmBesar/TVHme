@@ -1,0 +1,10 @@
+[package]
+name = "tvhme-mock"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tvhme-core = { path = "../tvhme-core" }
+tokio = { workspace = true }
+sha1 = { workspace = true }
