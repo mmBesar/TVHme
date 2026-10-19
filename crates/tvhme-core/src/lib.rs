@@ -6,3 +6,5 @@ pub mod permissions;
 pub mod session;
 pub mod signal;
 pub mod stream;
+pub mod theme;
+mod theme_data;
