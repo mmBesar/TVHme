@@ -36,11 +36,14 @@ jobs:
         run: cargo install cargo-apk --locked
       - name: Signing key
         env:
-          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 || secrets.ANDROID_KEYSTORE_BE64 }}
           KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
           if [ -n "$KEYSTORE_B64" ]; then
-            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "$KEYSTORE_B64" | tr -d '[:space:]' | base64 -d > "$RUNNER_TEMP/release.jks" \
+              || { echo "::error::The keystore secret is not valid base64. Re-create it from: base64 -w0 tvhme.jks"; exit 1; }
+            keytool -list -keystore "$RUNNER_TEMP/release.jks" -storepass "$KEYSTORE_PASS" >/dev/null \
+              || { echo "::error::Keystore could not be opened: wrong password or wrong file."; exit 1; }
             echo "CARGO_APK_RELEASE_KEYSTORE_PASSWORD=$KEYSTORE_PASS" >> "$GITHUB_ENV"
           else
             echo "::warning::No ANDROID_KEYSTORE_BASE64 secret set: signing with a throwaway key. Updates will NOT install over a previous build; uninstall first."
