@@ -49,6 +49,46 @@ pub struct Channel {
     pub name: String,
     pub icon: Option<String>,
     pub now: Option<NowEvent>,
+    /// UUIDs of the channel tags (groups) this channel belongs to.
+    pub tags: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Tag { pub uuid: String, pub name: String, pub index: i64 }
+
+/// One EPG event from `epg/events/grid`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Event {
+    pub id: u32,
+    pub channel_uuid: String,
+    pub channel_name: String,
+    pub start: i64,
+    pub stop: i64,
+    pub title: String,
+    pub summary: String,
+    /// Set when this event is scheduled/recording/recorded (`dvrUuid`, `dvrState`).
+    pub dvr_uuid: Option<String>,
+    pub dvr_state: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecordingKind { Upcoming, Finished, Failed }
+
+/// One DVR entry (`dvr/entry/grid_*`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Recording {
+    pub uuid: String,
+    pub channel_name: String,
+    pub title: String,
+    pub subtitle: String,
+    pub description: String,
+    pub start: i64,
+    pub stop: i64,
+    pub status: String,
+    pub sched_status: String,
+    pub filesize: u64,
+    pub errors: u32,
+    pub enabled: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -108,7 +148,52 @@ struct RawChannel {
     #[serde(default)] enabled: Option<bool>,
     #[serde(default)] icon_public_url: Option<String>,
     #[serde(default)] icon: Option<String>,
+    #[serde(default)] tags: Vec<String>,
 }
+
+#[derive(Deserialize)]
+struct RawTag {
+    uuid: String,
+    #[serde(default)] name: String,
+    #[serde(default)] index: i64,
+    #[serde(default)] enabled: Option<bool>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct RawFullEvent {
+    #[serde(rename = "eventId")] event_id: u32,
+    #[serde(rename = "channelUuid")] channel_uuid: String,
+    #[serde(rename = "channelName")] channel_name: String,
+    start: i64,
+    stop: i64,
+    title: String,
+    summary: String,
+    description: String,
+    #[serde(rename = "dvrUuid")] dvr_uuid: Option<String>,
+    #[serde(rename = "dvrState")] dvr_state: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct RawRecording {
+    uuid: String,
+    channelname: String,
+    disp_title: String,
+    disp_subtitle: String,
+    disp_description: String,
+    start: i64,
+    stop: i64,
+    status: String,
+    sched_status: String,
+    filesize: u64,
+    errors: u32,
+    enabled: bool,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct RawDvrConfig { uuid: String, name: String }
 
 #[derive(Deserialize)]
 struct RawEvent {
@@ -155,10 +240,16 @@ impl Api {
 
     pub fn stream_url(&self, uuid: &str) -> String { self.addr.stream_url(uuid, &self.user, &self.pass) }
 
-    async fn send(&self, path: &str) -> Result<reqwest::Response, ApiError> {
-        let mut req = self.http.get(self.addr.url(path));
+    async fn send_q(&self, method: reqwest::Method, path: &str, query: &[(&str, &str)], form: &[(&str, &str)]) -> Result<reqwest::Response, ApiError> {
+        let mut req = self.http.request(method, self.addr.url(path));
+        if !query.is_empty() { req = req.query(query); }
+        if !form.is_empty() { req = req.form(form); }
         if !self.user.is_empty() { req = req.basic_auth(&self.user, Some(&self.pass)); }
         req.send().await.map_err(|e| classify(e, &self.addr))
+    }
+
+    async fn send(&self, path: &str) -> Result<reqwest::Response, ApiError> {
+        self.send_q(reqwest::Method::GET, path, &[], &[]).await
     }
 
     /// Status code only (the body is not read).
@@ -166,11 +257,21 @@ impl Api {
         Ok(self.send(path).await?.status().as_u16())
     }
 
-    async fn json<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, ApiError> {
-        let r = self.send(path).await?;
+    async fn json_q<T: serde::de::DeserializeOwned>(&self, path: &str, query: &[(&str, &str)]) -> Result<T, ApiError> {
+        let r = self.send_q(reqwest::Method::GET, path, query, &[]).await?;
         let code = r.status().as_u16();
         if code != 200 { return Err(ApiError::Status(code)); }
         r.json::<T>().await.map_err(|e| ApiError::BadResponse(e.to_string()))
+    }
+
+    async fn json<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, ApiError> {
+        self.json_q(path, &[]).await
+    }
+
+    /// State-changing call (POST, form-encoded). Success is HTTP 200; the body is ignored.
+    async fn action(&self, path: &str, form: &[(&str, &str)]) -> Result<(), ApiError> {
+        let r = self.send_q(reqwest::Method::POST, path, &[], form).await?;
+        match r.status().as_u16() { 200 => Ok(()), c => Err(ApiError::Status(c)) }
     }
 
     /// Channels this account may see (the server filters them), sorted by number then name.
@@ -178,7 +279,7 @@ impl Api {
         let g: Grid<RawChannel> = self.json("/api/channel/grid?start=0&limit=10000").await?;
         let mut v: Vec<Channel> = g.entries.into_iter()
             .filter(|c| c.enabled.unwrap_or(true))
-            .map(|c| Channel { uuid: c.uuid, number: c.number, name: c.name, icon: c.icon_public_url.or(c.icon).filter(|s| !s.is_empty()), now: None })
+            .map(|c| Channel { uuid: c.uuid, number: c.number, name: c.name, icon: c.icon_public_url.or(c.icon).filter(|s| !s.is_empty()), now: None, tags: c.tags })
             .collect();
         v.sort_by(|a, b| (a.number == 0, a.number, &a.name).cmp(&(b.number == 0, b.number, &b.name)));
         Ok(v)
@@ -215,4 +316,81 @@ impl Api {
         let g: Grid<RawConnection> = self.json("/api/status/connections").await?;
         Ok(g.entries.into_iter().map(|c| ConnectionStatus { user: c.user, peer: c.peer, kind: c.kind, started: c.started }).collect())
     }
+
+    /// Channel tags (groups) this account may see, ordered by their index then name.
+    pub async fn tags(&self) -> Result<Vec<Tag>, ApiError> {
+        let g: Grid<RawTag> = self.json("/api/channeltag/grid?start=0&limit=1000").await?;
+        let mut v: Vec<Tag> = g.entries.into_iter().filter(|t| t.enabled.unwrap_or(true))
+            .map(|t| Tag { uuid: t.uuid, name: t.name, index: t.index }).collect();
+        v.sort_by(|a, b| (a.index, &a.name).cmp(&(b.index, &b.name)));
+        Ok(v)
+    }
+
+    fn events(g: Grid<RawFullEvent>) -> Vec<Event> {
+        g.entries.into_iter().map(|e| Event {
+            id: e.event_id, channel_uuid: e.channel_uuid, channel_name: e.channel_name, start: e.start, stop: e.stop,
+            title: e.title,
+            summary: if e.summary.is_empty() { e.description } else { e.summary },
+            dvr_uuid: e.dvr_uuid.filter(|s| !s.is_empty()), dvr_state: e.dvr_state.filter(|s| !s.is_empty()),
+        }).collect()
+    }
+
+    /// Upcoming and running events of one channel (server default order: by start).
+    pub async fn epg_channel(&self, channel_uuid: &str, limit: u32) -> Result<Vec<Event>, ApiError> {
+        let l = limit.to_string();
+        Ok(Self::events(self.json_q("/api/epg/events/grid", &[("channel", channel_uuid), ("limit", &l)]).await?))
+    }
+
+    /// EPG search. `fulltext` also searches summaries and descriptions.
+    pub async fn epg_search(&self, text: &str, fulltext: bool, limit: u32) -> Result<Vec<Event>, ApiError> {
+        let l = limit.to_string();
+        let mut q = vec![("title", text), ("limit", l.as_str())];
+        if fulltext { q.push(("fulltext", "1")); }
+        Ok(Self::events(self.json_q("/api/epg/events/grid", &q).await?))
+    }
+
+    /// Recordings of one kind. Needs the server's recorder permission.
+    pub async fn recordings(&self, kind: RecordingKind) -> Result<Vec<Recording>, ApiError> {
+        let path = match kind {
+            RecordingKind::Upcoming => "/api/dvr/entry/grid_upcoming",
+            RecordingKind::Finished => "/api/dvr/entry/grid_finished",
+            RecordingKind::Failed => "/api/dvr/entry/grid_failed",
+        };
+        let g: Grid<RawRecording> = self.json_q(path, &[("start", "0"), ("limit", "10000")]).await?;
+        Ok(g.entries.into_iter().map(|r| Recording {
+            uuid: r.uuid, channel_name: r.channelname, title: r.disp_title, subtitle: r.disp_subtitle, description: r.disp_description,
+            start: r.start, stop: r.stop, status: r.status, sched_status: r.sched_status, filesize: r.filesize, errors: r.errors, enabled: r.enabled,
+        }).collect())
+    }
+
+    /// Uuid of the default recording profile (the one with an empty name), else the first one.
+    pub async fn default_dvr_config(&self) -> Result<String, ApiError> {
+        let g: Grid<RawDvrConfig> = self.json("/api/dvr/config/grid").await?;
+        g.entries.iter().find(|c| c.name.is_empty()).or(g.entries.first()).map(|c| c.uuid.clone())
+            .ok_or_else(|| ApiError::BadResponse("the server has no recording profile".into()))
+    }
+
+    /// Schedule a recording from an EPG event.
+    pub async fn record_event(&self, event_id: u32) -> Result<(), ApiError> {
+        let cfg = self.default_dvr_config().await?;
+        self.action("/api/dvr/entry/create_by_event", &[("config_uuid", &cfg), ("event_id", &event_id.to_string())]).await
+    }
+
+    /// Record a channel right now for `minutes` (a one-off timer). UNVERIFIED against a real server:
+    /// field names follow the `dvr/entry/create` `conf` object (start, stop, channel, title).
+    pub async fn record_now(&self, channel_uuid: &str, title: &str, minutes: u32) -> Result<(), ApiError> {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+        let conf = serde_json::json!({
+            "start": now, "stop": now + minutes as i64 * 60, "channel": channel_uuid,
+            "title": { "eng": title }, "disp_title": title, "enabled": true
+        });
+        self.action("/api/dvr/entry/create", &[("conf", &conf.to_string())]).await
+    }
+
+    /// Stop a running recording gracefully (keeps the file).
+    pub async fn stop_recording(&self, uuid: &str) -> Result<(), ApiError> { self.action("/api/dvr/entry/stop", &[("uuid", uuid)]).await }
+    /// Delete a scheduled recording, or abort a running one.
+    pub async fn cancel_recording(&self, uuid: &str) -> Result<(), ApiError> { self.action("/api/dvr/entry/cancel", &[("uuid", uuid)]).await }
+    /// Remove a finished recording from storage.
+    pub async fn remove_recording(&self, uuid: &str) -> Result<(), ApiError> { self.action("/api/dvr/entry/remove", &[("uuid", uuid)]).await }
 }

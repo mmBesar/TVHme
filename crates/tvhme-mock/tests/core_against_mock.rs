@@ -128,3 +128,66 @@ async fn admin_overview_has_tuners_streams_and_clients_but_normal_user_is_refuse
     let u = Session::connect(opts(addr(&m), "user", "user", None)).await.unwrap();
     assert!(u.api.connections().await.is_err());
 }
+
+use tvhme_core::api::RecordingKind;
+
+#[tokio::test]
+async fn tags_come_ordered_and_channels_know_their_tags() {
+    let m = tvhme_mock::spawn().await;
+    let s = Session::connect(opts(addr(&m), "user", "user", None)).await.unwrap();
+    let tags = s.api.tags().await.unwrap();
+    assert_eq!(tags.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["News", "Movies"]);
+    let news: Vec<_> = s.channels.iter().filter(|c| c.tags.contains(&"tag-news".to_string())).map(|c| c.name.as_str()).collect();
+    assert_eq!(news, ["Mock One", "Mock Two"]);
+}
+
+#[tokio::test]
+async fn epg_per_channel_and_search() {
+    let m = tvhme_mock::spawn().await;
+    let s = Session::connect(opts(addr(&m), "user", "user", None)).await.unwrap();
+    let two = s.api.epg_channel("uuid-two", 20).await.unwrap();
+    assert_eq!(two.iter().map(|e| e.title.as_str()).collect::<Vec<_>>(), ["Evening News", "Late Movie"]);
+    assert!(two[0].start < two[0].stop && two[0].channel_name == "Mock Two");
+    assert_eq!(s.api.epg_search("movie", false, 20).await.unwrap().len(), 1);
+    // "delta" only appears in a summary: found by full-text search, not by title search
+    assert!(s.api.epg_search("delta", false, 20).await.unwrap().is_empty());
+    assert_eq!(s.api.epg_search("delta", true, 20).await.unwrap()[0].title, "Nature Documentary");
+}
+
+#[tokio::test]
+async fn schedule_manage_and_remove_recordings() {
+    let m = tvhme_mock::spawn().await;
+    let s = Session::connect(opts(addr(&m), "user", "user", None)).await.unwrap();
+    assert!(s.api.recordings(RecordingKind::Upcoming).await.unwrap().is_empty());
+    s.api.record_event(2).await.unwrap();
+    let up = s.api.recordings(RecordingKind::Upcoming).await.unwrap();
+    assert_eq!((up.len(), up[0].title.as_str(), up[0].channel_name.as_str()), (1, "Late Movie", "Mock Two"));
+    // the guide now shows the event as scheduled
+    let ev = s.api.epg_channel("uuid-two", 20).await.unwrap();
+    assert_eq!(ev[1].dvr_state.as_deref(), Some("scheduled"));
+    assert!(ev[1].dvr_uuid.is_some() && ev[0].dvr_uuid.is_none());
+    // one-off recording of a channel right now
+    s.api.record_now("uuid-one", "Manual", 30).await.unwrap();
+    assert_eq!(s.api.recordings(RecordingKind::Upcoming).await.unwrap().len(), 2);
+    // stop moves one to finished, cancel deletes the other, remove deletes a finished one
+    let stop_id = up[0].uuid.clone();
+    s.api.stop_recording(&stop_id).await.unwrap();
+    assert_eq!(s.api.recordings(RecordingKind::Finished).await.unwrap().len(), 1);
+    s.api.remove_recording(&stop_id).await.unwrap();
+    let rest = s.api.recordings(RecordingKind::Upcoming).await.unwrap();
+    assert_eq!(rest.len(), 1);
+    s.api.cancel_recording(&rest[0].uuid).await.unwrap();
+    assert!(s.api.recordings(RecordingKind::Upcoming).await.unwrap().is_empty());
+    // unknown event is refused by the server
+    assert!(s.api.record_event(999).await.is_err());
+}
+
+#[tokio::test]
+async fn account_without_recorder_rights_can_watch_and_search_but_the_server_refuses_recording() {
+    let m = tvhme_mock::spawn().await;
+    let s = Session::connect(opts(addr(&m), "viewer", "viewer", None)).await.unwrap();
+    assert_eq!(s.channels.len(), 3);
+    assert_eq!(s.api.epg_search("news", false, 10).await.unwrap().len(), 1);
+    assert_eq!(s.api.recordings(RecordingKind::Upcoming).await.unwrap_err(), ApiError::Status(403));
+    assert_eq!(s.api.record_event(2).await.unwrap_err(), ApiError::Status(403));
+}

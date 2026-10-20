@@ -5161,6 +5161,7 @@ name = "tvhme-mock"
 version = "0.1.0"
 dependencies = [
  "reqwest",
+ "serde_json",
  "sha1",
  "tokio",
  "tvhme-core",
