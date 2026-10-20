@@ -1,8 +1,11 @@
 slint::include_modules!();
 
+mod config;
 mod fmt;
+mod player;
 
 use slint::{Color, Model, ModelRc, VecModel};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use tvhme_core::api::{Event, RecordingKind};
 use tvhme_core::session::{ConnectOptions, Session, SignalSource, SignalWatch};
@@ -43,18 +46,6 @@ pub fn choice_from_indices(flavor: i32, accent: i32, mode: i32) -> ThemeChoice {
         flavor: Flavor::ALL[(flavor.clamp(0, 3)) as usize],
         accent: Accent::ALL[(accent.clamp(0, 13)) as usize],
         amoled: mode == 1,
-    }
-}
-
-fn open_player(url: &str) -> Result<(), String> {
-    #[cfg(target_os = "android")]
-    { let _ = url; Err("Android playback is not implemented yet".into()) }
-    #[cfg(not(target_os = "android"))]
-    {
-        for p in ["mpv", "vlc", "xdg-open"] {
-            if std::process::Command::new(p).arg(url).spawn().is_ok() { return Ok(()); }
-        }
-        Err("No player found (install mpv or vlc)".into())
     }
 }
 
@@ -130,18 +121,120 @@ fn load_recordings(w: &slint::Weak<MainWindow>, session: &Shared, kind: i32) {
     });
 }
 
+
+/// What is currently being watched: the external player (killed when this is dropped) and, for live TV,
+/// the signal subscription. Dropping it releases the tuner on the server.
+struct Playback {
+    gen: u64,
+    _kill: tokio::sync::oneshot::Sender<()>,
+    signal: Option<(SignalWatch, tokio::task::JoinHandle<()>)>,
+}
+impl Drop for Playback {
+    fn drop(&mut self) { if let Some((_, h)) = &self.signal { h.abort(); } }
+}
+type Slot = Arc<std::sync::Mutex<Option<Playback>>>;
+static GEN: AtomicU64 = AtomicU64::new(1);
+
+enum Target { Channel(String), Recording(String) }
+
+fn start_playback(w: slint::Weak<MainWindow>, session: Shared, slot: Slot, target: Target, title: String, choice: i32) {
+    rt().spawn(async move {
+        let Some(s) = session.lock().await.clone() else { return };
+        let gen = GEN.fetch_add(1, Ordering::SeqCst);
+        drop(slot.lock().unwrap().take()); // stop the previous player and subscription first
+        {
+            let t = title.clone();
+            ui_do(&w, move |ui| { ui.set_now_playing(t.into()); ui.set_play_note("".into()); ui.set_has_signal(false); });
+        }
+        let url = match &target { Target::Channel(u) => s.playback_url(u).await, Target::Recording(u) => s.recording_url(u) };
+        let (kill_tx, kill_rx) = tokio::sync::oneshot::channel::<()>();
+
+        #[cfg(not(target_os = "android"))]
+        let child = match player::spawn(&url, &title, choice) {
+            Ok(c) => Some(c),
+            Err(e) => { ui_do(&w, move |ui| ui.set_play_note(e.into())); None }
+        };
+        #[cfg(target_os = "android")]
+        {
+            if let Err(e) = player::open(&url, choice) { ui_do(&w, move |ui| ui.set_play_note(e.into())); }
+        }
+
+        let mut signal = None;
+        if let Target::Channel(uuid) = &target {
+            let sw = s.watch_signal(uuid, 1).await;
+            if sw.source == SignalSource::Unavailable {
+                ui_do(&w, |ui| ui.set_play_note("Signal info needs HTSP access or an admin account".into()));
+            }
+            let mut rx = sw.rx.clone();
+            let w2 = w.clone();
+            let h = tokio::spawn(async move {
+                while rx.changed().await.is_ok() {
+                    let Some(st) = rx.borrow().clone() else { continue };
+                    let (snr, snr_t, ss, ss_t) = signal_texts(&st);
+                    ui_do(&w2, move |ui| {
+                        ui.set_snr(snr); ui.set_ss(ss);
+                        ui.set_snr_text(snr_t.into()); ui.set_ss_text(ss_t.into());
+                        ui.set_has_signal(true);
+                    });
+                }
+            });
+            signal = Some((sw, h));
+        }
+        {
+            // If the user already started something newer while we were launching, the newer one wins.
+            let mut g = slot.lock().unwrap();
+            let pb = Playback { gen, _kill: kill_tx, signal };
+            if g.as_ref().map_or(true, |p| p.gen < gen) { *g = Some(pb); } else { drop(pb); }
+        }
+
+        // When the player window is closed, release the signal/tuner (but not if a newer playback replaced us).
+        #[cfg(not(target_os = "android"))]
+        if let Some(mut child) = child {
+            let (w, slot) = (w.clone(), slot.clone());
+            tokio::spawn(async move {
+                let mut kill_rx = kill_rx;
+                tokio::select! {
+                    _ = child.wait() => {
+                        let mut g = slot.lock().unwrap();
+                        if g.as_ref().map(|p| p.gen) == Some(gen) {
+                            drop(g.take());
+                            drop(g);
+                            ui_do(&w, |ui| { ui.set_now_playing("".into()); ui.set_has_signal(false); ui.set_play_note("".into()); });
+                        }
+                    }
+                    _ = &mut kill_rx => { let _ = child.kill().await; } // Stop pressed, or another channel started
+                }
+            });
+        }
+        #[cfg(target_os = "android")]
+        drop(kill_rx);
+    });
+}
+
 pub fn run() -> Result<(), slint::PlatformError> {
     let ui = MainWindow::new()?;
     // Fallback in case the Android backend reports no safe-area inset: keep content below the status bar.
     #[cfg(target_os = "android")]
     ui.set_extra_top(28.0);
-    apply_theme(&ui, ThemeChoice::default());
-    let session: Arc<tokio::sync::Mutex<Option<Arc<Session>>>> = Default::default();
-    let watch: Arc<std::sync::Mutex<Option<(SignalWatch, tokio::task::JoinHandle<()>)>>> = Default::default();
+    let saved = config::load();
+    ui.set_host(saved.address.clone().into());
+    ui.set_htsp_port(saved.htsp_port.clone().into());
+    ui.set_user(saved.user.clone().into());
+    ui.set_password(saved.pass.clone().into());
+    ui.set_insecure(saved.insecure);
+    ui.set_t_mode(saved.mode); ui.set_t_flavor(saved.flavor); ui.set_t_accent(saved.accent);
+    ui.set_player(saved.player);
+    ui.set_player_names(ModelRc::new(VecModel::from(player::names().into_iter().map(slint::SharedString::from).collect::<Vec<_>>())));
+    apply_theme(&ui, choice_from_indices(saved.flavor, saved.accent, saved.mode));
+    let session: Shared = Default::default();
+    let slot: Slot = Default::default();
 
     ui.on_apply_theme({
         let w = ui.as_weak();
-        move |f, a, m| { if let Some(ui) = w.upgrade() { apply_theme(&ui, choice_from_indices(f, a, m)); } }
+        move |f, a, m| {
+            if let Some(ui) = w.upgrade() { apply_theme(&ui, choice_from_indices(f, a, m)); }
+            config::update(|c| { c.flavor = f; c.accent = a; c.mode = m; });
+        }
     });
 
     ui.on_connect({
@@ -166,6 +259,10 @@ pub fn run() -> Result<(), slint::PlatformError> {
                         let admin = s.permissions.admin;
                         let info = format!("{}{}", s.api.addr.base_url(), if s.has_htsp() { "" } else { " (HTSP not reachable: live signal only for admins)" });
                         let me = format!("Signed in as {}{}", if opts.user.is_empty() { "anonymous".to_string() } else { opts.user.clone() }, if admin { " · Administrator" } else { "" });
+                        config::update(|c| {
+                            c.address = opts.address.clone(); c.htsp_port = opts.htsp_port.map(|p| p.to_string()).unwrap_or_default();
+                            c.user = opts.user.clone(); c.pass = opts.pass.clone(); c.insecure = opts.insecure_tls;
+                        });
                         *session.lock().await = Some(s);
                         let _ = slint::invoke_from_event_loop(move || {
                             let Some(ui) = w.upgrade() else { return };
@@ -190,53 +287,6 @@ pub fn run() -> Result<(), slint::PlatformError> {
             });
         }
     });
-
-    ui.on_play({
-        let (w, session, watch) = (ui.as_weak(), session.clone(), watch.clone());
-        move |uuid| {
-            let (w, session, watch) = (w.clone(), session.clone(), watch.clone());
-            let uuid = uuid.to_string();
-            rt().spawn(async move {
-                let Some(s) = session.lock().await.clone() else { return };
-                let name = s.channels.iter().find(|c| c.uuid == uuid).map(|c| c.name.clone()).unwrap_or_default();
-                drop(watch.lock().unwrap().take()); // stops the previous subscription/poller
-                let w2 = w.clone();
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = w2.upgrade() { ui.set_now_playing(name.into()); ui.set_play_note("".into()); ui.set_has_signal(false); }
-                });
-                if let Err(e) = open_player(&s.playback_url(&uuid).await) {
-                    let w2 = w.clone();
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = w2.upgrade() { ui.set_play_note(e.into()); }
-                    });
-                }
-                let sw = s.watch_signal(&uuid, 1).await;
-                if sw.source == SignalSource::Unavailable {
-                    let w2 = w.clone();
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = w2.upgrade() { ui.set_play_note("Signal info needs HTSP access or an admin account".into()); }
-                    });
-                }
-                let mut rx = sw.rx.clone();
-                let h = tokio::spawn(async move {
-                    while rx.changed().await.is_ok() {
-                        let Some(st) = rx.borrow().clone() else { continue };
-                        let (snr, snr_t, ss, ss_t) = signal_texts(&st);
-                        let w = w.clone();
-                        let _ = slint::invoke_from_event_loop(move || {
-                            if let Some(ui) = w.upgrade() {
-                                ui.set_snr(snr); ui.set_ss(ss);
-                                ui.set_snr_text(snr_t.into()); ui.set_ss_text(ss_t.into());
-                                ui.set_has_signal(true);
-                            }
-                        });
-                    }
-                });
-                *watch.lock().unwrap() = Some((sw, h));
-            });
-        }
-    });
-
 
     ui.on_tab_changed({
         let (w, session) = (ui.as_weak(), session.clone());
@@ -365,11 +415,47 @@ pub fn run() -> Result<(), slint::PlatformError> {
         move |k| load_recordings(&w, &session, k)
     });
 
+    ui.on_play({
+        let (w, session, slot) = (ui.as_weak(), session.clone(), slot.clone());
+        move |uuid| {
+            let Some(ui) = w.upgrade() else { return };
+            let title = ui.get_channels().iter().find(|c| c.uuid == uuid).map(|c| c.name.to_string()).unwrap_or_default();
+            start_playback(w.clone(), session.clone(), slot.clone(), Target::Channel(uuid.to_string()), title, ui.get_player());
+        }
+    });
+
+    ui.on_play_recording({
+        let (w, session, slot) = (ui.as_weak(), session.clone(), slot.clone());
+        move |uuid| {
+            let Some(ui) = w.upgrade() else { return };
+            let title = ui.get_recordings().iter().find(|r| r.uuid == uuid).map(|r| r.title.to_string()).unwrap_or_else(|| "Recording".into());
+            start_playback(w.clone(), session.clone(), slot.clone(), Target::Recording(uuid.to_string()), title, ui.get_player());
+        }
+    });
+
+    ui.on_player_changed(|i| config::update(|c| c.player = i));
+
     ui.on_stop_playback({
-        let (w, watch) = (ui.as_weak(), watch.clone());
+        let (w, slot) = (ui.as_weak(), slot.clone());
         move || {
-            if let Some((_sw, h)) = watch.lock().unwrap().take() { h.abort(); }
-            if let Some(ui) = w.upgrade() { ui.set_now_playing("".into()); ui.set_has_signal(false); }
+            drop(slot.lock().unwrap().take()); // also closes the player we started
+            if let Some(ui) = w.upgrade() { ui.set_now_playing("".into()); ui.set_has_signal(false); ui.set_play_note("".into()); }
+        }
+    });
+
+    ui.on_sign_out({
+        let (w, session, slot) = (ui.as_weak(), session.clone(), slot.clone());
+        move || {
+            drop(slot.lock().unwrap().take());
+            config::update(|c| c.pass.clear());
+            let (w, session) = (w.clone(), session.clone());
+            rt().spawn(async move {
+                *session.lock().await = None;
+                ui_do(&w, |ui| {
+                    ui.set_password("".into()); ui.set_now_playing("".into()); ui.set_has_signal(false);
+                    ui.set_tab(0); ui.set_screen(0);
+                });
+            });
         }
     });
 
@@ -446,6 +532,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
 #[cfg(target_os = "android")]
 #[no_mangle]
 fn android_main(app: slint::android::AndroidApp) {
+    if let Some(dir) = app.internal_data_path() { config::set_dir(dir); }
     slint::android::init(app).unwrap();
     run().unwrap();
 }

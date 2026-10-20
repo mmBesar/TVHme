@@ -191,3 +191,15 @@ async fn account_without_recorder_rights_can_watch_and_search_but_the_server_ref
     assert_eq!(s.api.recordings(RecordingKind::Upcoming).await.unwrap_err(), ApiError::Status(403));
     assert_eq!(s.api.record_event(2).await.unwrap_err(), ApiError::Status(403));
 }
+
+#[tokio::test]
+async fn recording_file_plays_for_recorders_and_is_refused_for_others() {
+    let m = tvhme_mock::spawn().await;
+    let ok = Session::connect(opts(addr(&m), "user", "user", None)).await.unwrap();
+    let r = reqwest::Client::new().get(ok.recording_url("rec-1")).send().await.unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    assert_eq!(&r.bytes().await.unwrap()[..], b"MOCK-DVR-DATA");
+    let no = Session::connect(opts(addr(&m), "viewer", "viewer", None)).await.unwrap();
+    let r = reqwest::Client::new().get(no.recording_url("rec-1")).send().await.unwrap();
+    assert_eq!(r.status().as_u16(), 403);
+}

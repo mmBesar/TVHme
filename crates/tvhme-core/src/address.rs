@@ -66,6 +66,12 @@ impl ServerAddress {
         let ui = if user.is_empty() { String::new() } else { format!("{}:{}@", pct(user), pct(pass)) };
         format!("{}/stream/channel/{}", self.base_with_userinfo(&ui), uuid)
     }
+
+    /// URL of a finished (or still running) recording file, `/dvrfile/<uuid>`, credentials as URL userinfo.
+    pub fn dvr_url(&self, uuid: &str, user: &str, pass: &str) -> String {
+        let ui = if user.is_empty() { String::new() } else { format!("{}:{}@", pct(user), pct(pass)) };
+        format!("{}/dvrfile/{}", self.base_with_userinfo(&ui), uuid)
+    }
 }
 
 pub(crate) fn pct(s: &str) -> String {
@@ -112,5 +118,6 @@ mod tests {
         let a = p("tv.lan");
         assert_eq!(a.stream_url("abc123", "bob", "p@ss"), "http://bob:p%40ss@tv.lan:9981/stream/channel/abc123");
         assert_eq!(a.stream_url("abc123", "", ""), "http://tv.lan:9981/stream/channel/abc123");
+        assert_eq!(a.dvr_url("r1", "bob", "p@ss"), "http://bob:p%40ss@tv.lan:9981/dvrfile/r1");
     }
 }

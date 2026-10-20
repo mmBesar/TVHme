@@ -149,7 +149,7 @@ fn pct_decode(s: &str) -> String {
     while i < b.len() {
         match b[i] {
             b'+' => { o.push(b' '); i += 1; }
-            b'%' if i + 2 < b.len() + 0 && i + 2 <= b.len() - 1 + 0 => {
+            b'%' if i + 2 < b.len() => {
                 if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) { o.push(v); i += 3; } else { o.push(b'%'); i += 1; }
             }
             c => { o.push(c); i += 1; }
@@ -302,6 +302,7 @@ async fn http_conn(mut stream: TcpStream, webroot: String, state: Shared) {
             "/api/status/inputs" => if is_admin {
                 json_ok("{\"entries\":[{\"uuid\":\"in1\",\"input\":\"Mock DVB-S #0\",\"stream\":\"10773H\",\"subs\":1,\"signal\":49151,\"signal_scale\":1,\"snr\":18500,\"snr_scale\":2,\"ber\":0,\"unc\":0}],\"totalCount\":1}".into())
             } else { forbidden() },
+            p if p.starts_with("/dvrfile/") => if can_record { ("200 OK", "video/mp2t", b"MOCK-DVR-DATA".to_vec()) } else { forbidden() },
             p if p.starts_with("/stream/channel/") => ("200 OK", "video/mp2t", b"MOCK-TS-DATA".to_vec()),
             _ => ("404 Not Found", "text/plain", b"not found".to_vec()),
         }

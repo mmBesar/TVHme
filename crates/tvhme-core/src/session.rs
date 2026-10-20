@@ -133,6 +133,9 @@ impl Session {
     /// Credentials-in-URL fallback (`/stream/channel/<uuid>`). Prefer `playback_url`.
     pub fn stream_url(&self, uuid: &str) -> String { self.api.stream_url(uuid) }
 
+    /// Playback URL of a recording (`/dvrfile/<uuid>`); the server checks the account's recorder rights.
+    pub fn recording_url(&self, uuid: &str) -> String { self.api.dvr_url(uuid) }
+
     /// Preferred playback URL. As tvhclient does, ask the server for a one-time ticket over HTSP
     /// (`getTicket`) and play `<base><path>?ticket=..&profile=pass`, so no password is put in the URL.
     /// Falls back to the credentials URL when HTSP is not reachable or the server refuses.

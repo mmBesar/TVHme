@@ -39,20 +39,38 @@ component TButton inherits Rectangle {
     min-height: 40px; min-width: 72px; border-radius: 8px;
     background: !enabled ? Theme.card : (primary ? (ta.has-hover ? Theme.acc.brighter(0.15) : Theme.acc) : (ta.has-hover ? Theme.card-hi : Theme.card));
     Text { text: root.text; color: root.primary && root.enabled ? Theme.on-acc : Theme.fg; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+    border-width: fs.has-focus ? 2px : 0px; border-color: Theme.acc;
     ta := TouchArea { enabled: root.enabled; clicked => { root.clicked(); } }
+    fs := FocusScope {
+        enabled: root.enabled;
+        key-pressed(e) => {
+            if (e.text == Key.Return || e.text == " ") { root.clicked(); return accept; }
+            reject
+        }
+    }
 }
 
 component TField inherits Rectangle {
     in property <string> placeholder;
     in property <InputType> kind: InputType.text;
     in-out property <string> text <=> input.text;
+    callback accepted();
+    callback edited();
     min-height: 40px; border-radius: 8px; background: Theme.card;
     border-width: 2px; border-color: input.has-focus ? Theme.acc : transparent;
     HorizontalLayout {
         padding-left: 12px; padding-right: 12px;
         Rectangle {
-            Text { visible: input.text == ""; text: root.placeholder; color: Theme.fg-dim; vertical-alignment: center; }
-            input := TextInput { color: Theme.fg; input-type: root.kind; vertical-alignment: center; single-line: true; }
+            Text { visible: input.text == ""; text: root.placeholder; color: Theme.fg-dim; vertical-alignment: center; overflow: elide; width: parent.width; }
+            // Identifiers, URLs and passwords: no auto-capital, no auto-correct/suggestions
+            input := TextInput {
+                color: Theme.fg; input-type: root.kind; vertical-alignment: center; single-line: true;
+                selection-background-color: Theme.acc.with-alpha(0.4); selection-foreground-color: Theme.fg;
+                input-method-hints: { capitalization: CapitalizationMode.none, auto-correct: false, auto-complete: false };
+                accepted => { root.accepted(); }
+                edited => { root.edited(); }
+            }
+            TouchArea { clicked => { input.focus(); } }
         }
     }
 }
@@ -154,6 +172,7 @@ component RecRow inherits Rectangle {
     callback stop();
     callback cancel();
     callback remove();
+    callback play();
     height: 84px;
     Rectangle {
         y: 4px; height: parent.height - 8px; background: Theme.card; border-radius: 8px;
@@ -167,6 +186,7 @@ component RecRow inherits Rectangle {
             }
             VerticalLayout {
                 alignment: center; spacing: 4px; width: 92px;
+                if root.kind == 1 || root.rec.running: TButton { text: "▶ Play"; primary: true; height: 34px; clicked => { root.play(); } }
                 if root.rec.running: TButton { text: "Stop"; height: 34px; clicked => { root.stop(); } }
                 if !root.rec.running && root.kind == 0: TButton { text: "Cancel"; height: 34px; clicked => { root.cancel(); } }
                 if !root.rec.running && root.kind != 0: TButton { text: "Delete"; height: 34px; clicked => { root.remove(); } }
@@ -175,25 +195,61 @@ component RecRow inherits Rectangle {
     }
 }
 
+component TSelect inherits Rectangle {
+    in property <[string]> model;
+    in-out property <int> current-index: 0;
+    callback selected(int);
+    min-height: 40px; border-radius: 8px; background: Theme.card;
+    border-width: fs.has-focus ? 2px : 0px; border-color: Theme.acc;
+    Text { x: 12px; width: parent.width - 40px; text: root.model[root.current-index]; color: Theme.fg; vertical-alignment: center; overflow: elide; }
+    Text { x: parent.width - 28px; text: "▾"; color: Theme.fg-dim; vertical-alignment: center; }
+    ta := TouchArea { clicked => { pop.show(); } }
+    fs := FocusScope {
+        key-pressed(e) => {
+            if (e.text == Key.Return || e.text == " ") { pop.show(); return accept; }
+            if (e.text == Key.DownArrow && root.current-index < root.model.length - 1) { root.current-index += 1; root.selected(root.current-index); return accept; }
+            if (e.text == Key.UpArrow && root.current-index > 0) { root.current-index -= 1; root.selected(root.current-index); return accept; }
+            reject
+        }
+    }
+    pop := PopupWindow {
+        x: 0; y: root.height + 2px; width: root.width; height: min(root.model.length * 40px + 8px, 280px);
+        close-policy: close-on-click-outside;
+        Rectangle { background: Theme.bar; border-radius: 8px; border-width: 1px; border-color: Theme.card-hi; }
+        Flickable {
+            content-height: root.model.length * 40px + 8px;
+            for item[i] in root.model: Rectangle {
+                y: 4px + i * 40px; height: 40px; x: 4px; width: parent.width - 8px; border-radius: 6px;
+                background: pa.has-hover ? Theme.card-hi : (i == root.current-index ? Theme.card : transparent);
+                Text { x: 10px; text: item; color: i == root.current-index ? Theme.acc : Theme.fg; vertical-alignment: center; }
+                pa := TouchArea { clicked => { root.current-index = i; root.selected(i); pop.close(); } }
+            }
+        }
+    }
+}
+
 component AppearancePanel inherits VerticalLayout {
+    in-out property <int> mode-index: 0;
+    in-out property <int> flavor-index: 2;
+    in-out property <int> accent-index: 3;
     callback apply(int, int, int);
     padding: 20px; spacing: 12px; alignment: start;
     Text { text: "Appearance"; color: Theme.fg; font-size: 22px; font-weight: 700; }
     Text { text: "Style"; color: Theme.fg-dim; }
-    mode := ComboBox {
-        model: ["Catppuccin", "AMOLED black", "System (native)"]; current-index: 0;
-        selected => { root.apply(flavor.current-index, accent.current-index, mode.current-index); }
+    TSelect {
+        model: ["Catppuccin", "AMOLED black", "System (native)"]; current-index <=> root.mode-index;
+        selected(i) => { root.apply(root.flavor-index, root.accent-index, root.mode-index); }
     }
     Text { text: "Flavor"; color: Theme.fg-dim; }
-    flavor := ComboBox {
-        model: ["Latte", "Frappé", "Macchiato", "Mocha"]; current-index: 2;
-        selected => { root.apply(flavor.current-index, accent.current-index, mode.current-index); }
+    TSelect {
+        model: ["Latte", "Frappé", "Macchiato", "Mocha"]; current-index <=> root.flavor-index;
+        selected(i) => { root.apply(root.flavor-index, root.accent-index, root.mode-index); }
     }
     Text { text: "Accent"; color: Theme.fg-dim; }
-    accent := ComboBox {
+    TSelect {
         model: ["Rosewater", "Flamingo", "Pink", "Mauve", "Red", "Maroon", "Peach", "Yellow", "Green", "Teal", "Sky", "Sapphire", "Blue", "Lavender"];
-        current-index: 3;
-        selected => { root.apply(flavor.current-index, accent.current-index, mode.current-index); }
+        current-index <=> root.accent-index;
+        selected(i) => { root.apply(root.flavor-index, root.accent-index, root.mode-index); }
     }
 }
 
@@ -260,6 +316,11 @@ export component MainWindow inherits Window {
     in-out property <bool> insecure: false;
     in-out property <string> user;
     in-out property <string> password;
+    in-out property <int> t-mode: 0;
+    in-out property <int> t-flavor: 2;
+    in-out property <int> t-accent: 3;
+    in-out property <int> player: 0;
+    in property <[string]> player-names;
 
     callback connect(string, string, string, string, bool);
     callback tab-changed(int);
@@ -276,6 +337,9 @@ export component MainWindow inherits Window {
     callback load-recordings(int);
     callback apply-theme(int, int, int);
     callback refresh-server();
+    callback play-recording(string);
+    callback sign-out();
+    callback player-changed(int);
 
     Timer {
         interval: 4s; running: root.toast != "";
@@ -287,30 +351,38 @@ export component MainWindow inherits Window {
         width: parent.width - root.safe-area-insets.left - root.safe-area-insets.right;
         height: parent.height - max(root.safe-area-insets.top, root.extra-top) - root.safe-area-insets.bottom;
 
-        if root.screen == 0: VerticalLayout {
-            alignment: center; padding: 24px; spacing: 10px;
-            Text { text: "TVHme"; color: Theme.acc; font-size: 36px; font-weight: 800; horizontal-alignment: center; }
-            Text { text: "Connect to Tvheadend"; color: Theme.fg-dim; horizontal-alignment: center; }
-            TField { placeholder: "Server, e.g. 10.0.0.5:9981 or https://tv.example.com"; text <=> root.host; }
-            HorizontalLayout {
-                spacing: 8px;
-                Text { text: "HTSP port (signal)"; color: Theme.fg-dim; vertical-alignment: center; }
-                TField { placeholder: "9982"; text <=> root.htsp-port; kind: InputType.number; }
+        if root.screen == 0: Flickable {
+            content-height: max(self.height, form.preferred-height);
+            form := VerticalLayout {
+                alignment: center; padding: 24px; spacing: 10px;
+                Text { text: "TVHme"; color: Theme.acc; font-size: 36px; font-weight: 800; horizontal-alignment: center; }
+                Text { text: "Connect to Tvheadend"; color: Theme.fg-dim; horizontal-alignment: center; }
+                TField { placeholder: "Server address"; text <=> root.host; accepted => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure); } }
+                Text { text: "e.g. 10.0.0.5:9981 or https://tv.example.com"; color: Theme.fg-dim; font-size: 12px; wrap: word-wrap; }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text { text: "HTSP port (signal)"; color: Theme.fg-dim; vertical-alignment: center; }
+                    TField { placeholder: "9982"; text <=> root.htsp-port; kind: InputType.number; accepted => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure); } }
+                }
+                TField { placeholder: "Username"; text <=> root.user; accepted => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure); } }
+                TField { placeholder: "Password"; kind: InputType.password; text <=> root.password; accepted => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure); } }
+                CheckBox { text: "Allow self-signed certificate"; checked <=> root.insecure; }
+                TButton {
+                    text: root.busy ? "Connecting…" : "Connect"; primary: true; enabled: !root.busy;
+                    clicked => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure); }
+                }
+                if root.error != "": Text { text: root.error; color: Theme.c-bad; wrap: word-wrap; horizontal-alignment: center; }
+                TButton { text: "Appearance"; clicked => { root.screen = 2; } }
             }
-            TField { placeholder: "Username"; text <=> root.user; }
-            TField { placeholder: "Password"; kind: InputType.password; text <=> root.password; }
-            CheckBox { text: "Allow self-signed certificate"; checked <=> root.insecure; }
-            TButton {
-                text: root.busy ? "Connecting…" : "Connect"; primary: true; enabled: !root.busy;
-                clicked => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure); }
-            }
-            if root.error != "": Text { text: root.error; color: Theme.c-bad; wrap: word-wrap; horizontal-alignment: center; }
-            TButton { text: "Appearance"; clicked => { root.screen = 2; } }
         }
 
         if root.screen == 2: VerticalLayout {
-            AppearancePanel { apply(f, a, m) => { root.apply-theme(f, a, m); } }
-            VerticalLayout { padding: 20px; TButton { text: "Back"; primary: true; clicked => { root.screen = 0; } } }
+            alignment: start;
+            AppearancePanel {
+                mode-index <=> root.t-mode; flavor-index <=> root.t-flavor; accent-index <=> root.t-accent;
+                apply(f, a, m) => { root.apply-theme(f, a, m); }
+            }
+            HorizontalLayout { padding: 20px; padding-top: 4px; alignment: start; TButton { text: "Back"; primary: true; width: 120px; height: 44px; clicked => { root.screen = 0; } } }
         }
 
         if root.screen == 1: Rectangle {
@@ -374,7 +446,7 @@ export component MainWindow inherits Window {
                             padding: 12px; spacing: 6px;
                             HorizontalLayout {
                                 Text { text: root.now-playing; color: Theme.fg; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; }
-                                TButton { text: "Stop"; width: 72px; clicked => { root.stop-playback(); } }
+                                TButton { text: "Stop"; width: 72px; height: 40px; clicked => { root.stop-playback(); } }
                             }
                             if root.has-signal && root.snr-text != "": SignalMeter { label: "SNR"; value: root.snr; text: root.snr-text; }
                             if root.has-signal && root.ss-text != "": SignalMeter { label: "SS"; value: root.ss; text: root.ss-text; }
@@ -389,9 +461,9 @@ export component MainWindow inherits Window {
                     Header { title: "Guide"; }
                     VerticalLayout {
                         padding: 12px; spacing: 8px;
-                        ComboBox {
+                        TSelect {
                             model: root.channel-names; current-index <=> root.guide-index;
-                            selected(v) => { root.load-guide(self.current-index); }
+                            selected(i) => { root.load-guide(i); }
                         }
                     }
                     if root.guide-events.length == 0: Text { text: root.guide-busy ? "Loading…" : "No guide data for this channel"; color: Theme.fg-dim; horizontal-alignment: center; }
@@ -417,6 +489,7 @@ export component MainWindow inherits Window {
                     ListView {
                         for r in root.recordings: RecRow {
                             rec: r; kind: root.rec-kind;
+                            play => { root.play-recording(r.uuid); }
                             stop => { root.stop-recording(r.uuid); }
                             cancel => { root.cancel-recording(r.uuid); }
                             remove => { root.remove-recording(r.uuid); }
@@ -431,7 +504,7 @@ export component MainWindow inherits Window {
                         padding: 12px; spacing: 8px;
                         HorizontalLayout {
                             spacing: 8px;
-                            TField { placeholder: "Title or text"; text <=> root.search-text; }
+                            TField { placeholder: "Title or text"; text <=> root.search-text; accepted => { root.do-search(root.search-text, root.search-full); } }
                             TButton { text: "Search"; primary: true; width: 90px; clicked => { root.do-search(root.search-text, root.search-full); } }
                         }
                         CheckBox { text: "Also search descriptions"; checked <=> root.search-full; }
@@ -472,8 +545,22 @@ export component MainWindow inherits Window {
                 // ---- Settings
                 if root.tab == 5: VerticalLayout {
                     Header { title: "Settings"; }
-                    Text { x: 0; text: root.me-text; color: Theme.fg-dim; wrap: word-wrap; }
-                    AppearancePanel { apply(f, a, m) => { root.apply-theme(f, a, m); } }
+                    ScrollView {
+                        VerticalLayout {
+                            alignment: start;
+                            VerticalLayout {
+                                padding: 20px; padding-bottom: 0px; spacing: 8px;
+                                Text { text: root.me-text; color: Theme.fg-dim; wrap: word-wrap; }
+                                Text { text: "Video player"; color: Theme.fg; font-size: 22px; font-weight: 700; }
+                                TSelect { model: root.player-names; current-index <=> root.player; selected(i) => { root.player-changed(i); } }
+                                TButton { text: "Sign out (forget password)"; clicked => { root.sign-out(); } }
+                            }
+                            AppearancePanel {
+                                mode-index <=> root.t-mode; flavor-index <=> root.t-flavor; accent-index <=> root.t-accent;
+                                apply(f, a, m) => { root.apply-theme(f, a, m); }
+                            }
+                        }
+                    }
                 }
             }
         }

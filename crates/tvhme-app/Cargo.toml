@@ -13,11 +13,15 @@ path = "src/main.rs"
 
 [dependencies]
 tvhme-core = { path = "../tvhme-core" }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["process", "sync", "macros", "time", "rt-multi-thread"] }
 slint = "1.18"
+serde = { workspace = true }
+serde_json = { workspace = true }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+ndk-context = "0.1"
 slint = { version = "1.18", features = ["backend-android-activity-06"] }
 
 [build-dependencies]

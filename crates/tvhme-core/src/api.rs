@@ -251,6 +251,7 @@ impl Api {
     }
 
     pub fn stream_url(&self, uuid: &str) -> String { self.addr.stream_url(uuid, &self.user, &self.pass) }
+    pub fn dvr_url(&self, uuid: &str) -> String { self.addr.dvr_url(uuid, &self.user, &self.pass) }
 
     async fn send_q(&self, method: reqwest::Method, path: &str, query: &[(&str, &str)], form: &[(&str, &str)]) -> Result<reqwest::Response, ApiError> {
         let mut req = self.http.request(method, self.addr.url(path));

@@ -3,6 +3,7 @@
 //! Probes (from the Tvheadend API docs):
 //! - `config/capabilities` needs the "Web interface" or "HTSP" privilege -> any usable account gets 200.
 //! - `config/load` needs the admin privilege -> 200 for admins, 403 for everyone else.
+//!
 //! Errors: 401 bad credentials, 403 missing privilege, 404 unknown function.
 use crate::api::{Api, ApiError};
 
