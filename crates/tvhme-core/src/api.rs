@@ -72,6 +72,30 @@ pub struct InputStatus {
     pub unc: Option<u32>,
 }
 
+/// `/api/serverinfo`
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct ServerInfo { pub name: String, pub sw_version: String, pub api_version: u32 }
+
+/// One entry of `/api/status/subscriptions` (admin only).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SubscriptionStatus { pub title: String, pub service: String, pub state: String, pub errors: u32 }
+
+/// One entry of `/api/status/connections` (admin only).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConnectionStatus { pub user: String, pub peer: String, pub kind: String, pub started: i64 }
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct RawServerInfo { name: String, sw_version: String, api_version: u32 }
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct RawSubscription { title: String, service: String, state: String, errors: u32 }
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct RawConnection { user: String, peer: String, #[serde(rename = "type")] kind: String, started: i64 }
+
 #[derive(Deserialize)]
 #[serde(bound(deserialize = "T: Deserialize<'de>"))]
 struct Grid<T> { #[serde(default = "Vec::new")] entries: Vec<T> }
@@ -173,5 +197,22 @@ impl Api {
             input: i.input, stream: i.stream, subs: i.subs, signal: i.signal, signal_scale: i.signal_scale,
             snr: i.snr, snr_scale: i.snr_scale, ber: i.ber, unc: i.unc,
         }).collect())
+    }
+
+    pub async fn server_info(&self) -> Result<ServerInfo, ApiError> {
+        let r: RawServerInfo = self.json("/api/serverinfo").await?;
+        Ok(ServerInfo { name: r.name, sw_version: r.sw_version, api_version: r.api_version })
+    }
+
+    /// Streams currently being served. Admin only on the server.
+    pub async fn subscriptions(&self) -> Result<Vec<SubscriptionStatus>, ApiError> {
+        let g: Grid<RawSubscription> = self.json("/api/status/subscriptions").await?;
+        Ok(g.entries.into_iter().map(|s| SubscriptionStatus { title: s.title, service: s.service, state: s.state, errors: s.errors }).collect())
+    }
+
+    /// Clients connected to the server. Admin only on the server.
+    pub async fn connections(&self) -> Result<Vec<ConnectionStatus>, ApiError> {
+        let g: Grid<RawConnection> = self.json("/api/status/connections").await?;
+        Ok(g.entries.into_iter().map(|c| ConnectionStatus { user: c.user, peer: c.peer, kind: c.kind, started: c.started }).collect())
     }
 }

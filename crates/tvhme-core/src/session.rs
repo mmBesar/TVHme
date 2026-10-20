@@ -1,7 +1,7 @@
 //! High-level session: HTTP API for everything (channels, now-playing, permissions, streams);
 //! HTSP is optional and used only for live signal (SNR/SS) on a subscription.
 use crate::address::{ServerAddress, DEFAULT_HTSP_PORT};
-use crate::api::{Api, ApiError, Channel};
+use crate::api::{Api, ApiError, Channel, ConnectionStatus, InputStatus, ServerInfo, SubscriptionStatus};
 use crate::client::Client;
 use crate::htsmsg::{Map, MapExt, Value};
 use crate::permissions::{Permissions, ProbeError};
@@ -26,6 +26,15 @@ pub struct ConnectOptions {
     pub pass: String,
     pub htsp_port: Option<u16>,
     pub insecure_tls: bool,
+}
+
+/// Everything the admin "Server" screen shows, fetched in one go.
+#[derive(Clone, Debug, Default)]
+pub struct ServerOverview {
+    pub info: ServerInfo,
+    pub inputs: Vec<InputStatus>,
+    pub subscriptions: Vec<SubscriptionStatus>,
+    pub connections: Vec<ConnectionStatus>,
 }
 
 pub struct Session {
@@ -105,6 +114,18 @@ impl Session {
             Some(Htsp { client, ids, signal_tx })
         };
         tokio::time::timeout(Duration::from_secs(8), attempt).await.ok().flatten()
+    }
+
+    /// Admin-only overview. `serverinfo` must succeed; the status lists degrade to empty if one call fails.
+    pub async fn server_overview(&self) -> Result<ServerOverview, ApiError> {
+        let (info, inputs, subs, conns) = tokio::join!(
+            self.api.server_info(), self.api.inputs(), self.api.subscriptions(), self.api.connections());
+        Ok(ServerOverview {
+            info: info?,
+            inputs: inputs.unwrap_or_default(),
+            subscriptions: subs.unwrap_or_default(),
+            connections: conns.unwrap_or_default(),
+        })
     }
 
     pub fn has_htsp(&self) -> bool { self.htsp.is_some() }

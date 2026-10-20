@@ -115,3 +115,16 @@ async fn playback_url_falls_back_to_credentials_without_htsp() {
     let url = s.playback_url("uuid-one").await;
     assert!(url.starts_with("http://user:user@127.0.0.1:") && url.contains("/stream/channel/uuid-one"), "{url}");
 }
+
+#[tokio::test]
+async fn admin_overview_has_tuners_streams_and_clients_but_normal_user_is_refused() {
+    let m = tvhme_mock::spawn().await;
+    let a = Session::connect(opts(addr(&m), "admin", "admin", None)).await.unwrap();
+    let o = a.server_overview().await.unwrap();
+    assert_eq!(o.info.sw_version, "4.3-mock");
+    assert_eq!(o.inputs.len(), 1);
+    assert_eq!(o.subscriptions[0].service, "Mock Two");
+    assert_eq!(o.connections[0].peer, "10.0.0.7");
+    let u = Session::connect(opts(addr(&m), "user", "user", None)).await.unwrap();
+    assert!(u.api.connections().await.is_err());
+}

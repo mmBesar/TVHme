@@ -164,6 +164,13 @@ async fn http_conn(mut stream: TcpStream, webroot: String) {
                 json_ok(format!("{{\"entries\":[{}],\"total\":{}}}", e.join(","), CHANNELS.len()))
             }
             "/api/epg/events/grid" => json_ok("{\"entries\":[{\"eventId\":1,\"channelUuid\":\"uuid-two\",\"title\":\"Evening News\",\"start\":1000,\"stop\":4600}],\"totalCount\":1}".into()),
+            "/api/serverinfo" => json_ok("{\"sw_version\":\"4.3-mock\",\"api_version\":19,\"name\":\"tvheadend\",\"capabilities\":[\"linuxdvb\"]}".into()),
+            "/api/status/subscriptions" => if is_admin {
+                json_ok("{\"entries\":[{\"id\":1,\"title\":\"HTSP\",\"service\":\"Mock Two\",\"state\":\"Running\",\"errors\":0}],\"totalCount\":1}".into())
+            } else { ("403 Forbidden", "text/plain", b"forbidden".to_vec()) },
+            "/api/status/connections" => if is_admin {
+                json_ok("{\"entries\":[{\"id\":1,\"user\":\"user\",\"peer\":\"10.0.0.7\",\"type\":\"HTSP\",\"started\":1700000000}],\"totalCount\":1}".into())
+            } else { ("403 Forbidden", "text/plain", b"forbidden".to_vec()) },
             "/api/status/inputs" => if is_admin {
                 json_ok("{\"entries\":[{\"uuid\":\"in1\",\"input\":\"Mock DVB-S #0\",\"stream\":\"10773H\",\"subs\":1,\"signal\":49151,\"signal_scale\":1,\"snr\":18500,\"snr_scale\":2,\"ber\":0,\"unc\":0}],\"totalCount\":1}".into())
             } else { ("403 Forbidden", "text/plain", b"forbidden".to_vec()) },
