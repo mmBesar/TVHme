@@ -40,7 +40,7 @@ jobs:
           KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
           if [ -n "$KEYSTORE_B64" ]; then
-            echo "$KEYSTORE_B64" | tr -d '[:space:]' | base64 -d > "$RUNNER_TEMP/release.jks" \
+            echo "$KEYSTORE_B64" | tr -cd 'A-Za-z0-9+/=' | base64 -d > "$RUNNER_TEMP/release.jks" \
               || { echo "::error::The keystore secret is not valid base64. Re-create it from: base64 -w0 tvhme.jks"; exit 1; }
             keytool -list -keystore "$RUNNER_TEMP/release.jks" -storepass "$KEYSTORE_PASS" >/dev/null \
               || { echo "::error::Keystore could not be opened: wrong password or wrong file."; exit 1; }
