@@ -71,6 +71,9 @@ fn signal_texts(s: &SignalStatus) -> (f32, String, f32, String) {
 
 pub fn run() -> Result<(), slint::PlatformError> {
     let ui = MainWindow::new()?;
+    // Fallback in case the Android backend reports no safe-area inset: keep content below the status bar.
+    #[cfg(target_os = "android")]
+    ui.set_extra_top(28.0);
     apply_theme(&ui, ThemeChoice::default());
     let session: Arc<tokio::sync::Mutex<Option<Arc<Session>>>> = Default::default();
     let watch: Arc<std::sync::Mutex<Option<(SignalWatch, tokio::task::JoinHandle<()>)>>> = Default::default();
@@ -100,7 +103,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
                             now: c.now.as_ref().map(|n| n.title.clone()).unwrap_or_default().into(),
                         }).collect();
                         let admin = s.permissions.admin;
-                        let info = format!("Connected to {} as {}{}", s.api.addr.base_url(), opts.user, if s.has_htsp() { "" } else { " (HTSP not reachable: live signal only for admins)" });
+                        let info = format!("{}{}", s.api.addr.base_url(), if s.has_htsp() { "" } else { " (HTSP not reachable: live signal only for admins)" });
+                        let me = format!("Signed in as {}{}", if opts.user.is_empty() { "anonymous".to_string() } else { opts.user.clone() }, if admin { " · Administrator" } else { "" });
                         *session.lock().await = Some(s);
                         let _ = slint::invoke_from_event_loop(move || {
                             let Some(ui) = w.upgrade() else { return };
@@ -108,6 +112,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                             ui.set_channels(ModelRc::new(VecModel::from(items)));
                             ui.set_is_admin(admin);
                             ui.set_server_info(info.into());
+                            ui.set_me_text(me.into());
                             ui.set_screen(1);
                         });
                     }
@@ -176,11 +181,64 @@ pub fn run() -> Result<(), slint::PlatformError> {
         }
     });
 
+    ui.on_refresh_server({
+        let (w, session) = (ui.as_weak(), session.clone());
+        move || {
+            let (w, session) = (w.clone(), session.clone());
+            if let Some(ui) = w.upgrade() { ui.set_server_busy(true); ui.set_server_error("".into()); }
+            rt().spawn(async move {
+                let Some(s) = session.lock().await.clone() else { return };
+                let res = s.server_overview().await;
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(ui) = w.upgrade() else { return };
+                    ui.set_server_busy(false);
+                    match res {
+                        Ok(o) => {
+                            let tuners: Vec<InfoRow> = o.inputs.iter().map(|i| {
+                                let st = SignalStatus::from_input(i);
+                                let (_, snr_t, _, ss_t) = signal_texts(&st);
+                                let mut parts = vec![if i.subs > 0 { format!("{} · in use", i.stream) } else { "idle".to_string() }];
+                                if !snr_t.is_empty() { parts.push(format!("SNR {snr_t}")); }
+                                if !ss_t.is_empty() { parts.push(format!("SS {ss_t}")); }
+                                if let Some(u) = i.unc { parts.push(format!("UNC {u}")); }
+                                InfoRow { title: i.input.clone().into(), detail: parts.join(" · ").into() }
+                            }).collect();
+                            let streams: Vec<InfoRow> = o.subscriptions.iter().map(|s| InfoRow {
+                                title: (if s.service.is_empty() { s.title.clone() } else { s.service.clone() }).into(),
+                                detail: format!("{} · {} · {} error(s)", s.title, s.state, s.errors).into(),
+                            }).collect();
+                            let clients: Vec<InfoRow> = o.connections.iter().map(|c| InfoRow {
+                                title: (if c.user.is_empty() { "anonymous".to_string() } else { c.user.clone() }).into(),
+                                detail: format!("{} · {}", c.kind, c.peer).into(),
+                            }).collect();
+                            let ver = format!("{} {} (API {})", o.info.name, o.info.sw_version, o.info.api_version);
+                            ui.set_tuners(ModelRc::new(VecModel::from(tuners)));
+                            ui.set_streams(ModelRc::new(VecModel::from(streams)));
+                            ui.set_clients(ModelRc::new(VecModel::from(clients)));
+                            let base = ui.get_server_info().to_string();
+                            if !base.contains(&o.info.sw_version) { ui.set_server_info(format!("{base}\n{ver}").into()); }
+                        }
+                        Err(e) => ui.set_server_error(e.to_string().into()),
+                    }
+                });
+            });
+        }
+    });
+
     // Developer aid: TVHME_AUTOCONNECT=address,htsp_port,user,pass[,play_channel_uuid]
     if let Ok(v) = std::env::var("TVHME_AUTOCONNECT") {
         let p: Vec<String> = v.split(',').map(str::to_string).collect();
         if p.len() >= 4 {
             ui.invoke_connect(p[0].clone().into(), p[1].clone().into(), p[2].clone().into(), p[3].clone().into(), false);
+            if let Ok(scr) = std::env::var("TVHME_SCREEN") {
+                if let Ok(n) = scr.parse::<i32>() {
+                    let w = ui.as_weak();
+                    rt().spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                        let _ = slint::invoke_from_event_loop(move || { if let Some(ui) = w.upgrade() { ui.set_screen(n); if n == 3 { ui.invoke_refresh_server(); } } });
+                    });
+                }
+            }
             if let Some(ch) = p.get(4).cloned() {
                 let w = ui.as_weak();
                 rt().spawn(async move {
