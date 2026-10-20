@@ -20,6 +20,18 @@ pub enum ApiError {
     BadResponse(String),
 }
 
+impl ApiError {
+    /// Short text for the user. 403 is the server telling us this account may not do that.
+    pub fn user_message(&self) -> String {
+        match self {
+            ApiError::Status(401) => "Wrong username or password.".into(),
+            ApiError::Status(403) => "Your account is not allowed to do this on the server.".into(),
+            ApiError::Status(404) => "The server does not know this item (it may be gone already).".into(),
+            other => other.to_string(),
+        }
+    }
+}
+
 fn chain(e: &dyn std::error::Error) -> String {
     let mut s = e.to_string();
     let mut cur = e.source();
@@ -393,4 +405,14 @@ impl Api {
     pub async fn cancel_recording(&self, uuid: &str) -> Result<(), ApiError> { self.action("/api/dvr/entry/cancel", &[("uuid", uuid)]).await }
     /// Remove a finished recording from storage.
     pub async fn remove_recording(&self, uuid: &str) -> Result<(), ApiError> { self.action("/api/dvr/entry/remove", &[("uuid", uuid)]).await }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn forbidden_is_explained_as_account_rights() {
+        assert!(ApiError::Status(403).user_message().contains("not allowed"));
+        assert!(ApiError::Status(500).user_message().contains("500"));
+    }
 }

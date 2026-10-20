@@ -2,6 +2,10 @@ import { ComboBox, ListView, Palette, CheckBox, ScrollView } from "std-widgets.s
 
 export struct InfoRow { title: string, detail: string }
 export struct ChannelItem { uuid: string, number: int, name: string, now: string }
+export struct NavItem { id: int, label: string }
+export struct TagItem { uuid: string, name: string, selected: bool }
+export struct EventItem { id: int, channel: string, title: string, when: string, summary: string, state: string, dvr-uuid: string }
+export struct RecItem { uuid: string, title: string, channel: string, when: string, status: string, running: bool }
 
 export global Theme {
     in property <bool> use-system: false;
@@ -90,9 +94,119 @@ component SignalMeter inherits Rectangle {
     }
 }
 
+
+component Chip inherits Rectangle {
+    in property <string> text;
+    in property <bool> active;
+    callback clicked();
+    height: 34px; border-radius: 17px;
+    width: label.preferred-width + 28px;
+    background: root.active ? Theme.acc : (ta.has-hover ? Theme.card-hi : Theme.card);
+    label := Text { x: 14px; text: root.text; color: root.active ? Theme.on-acc : Theme.fg; vertical-alignment: center; font-size: 13px; font-weight: 600; height: parent.height; }
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
+
+component NavButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> active;
+    in property <bool> vertical;
+    callback clicked();
+    min-height: 44px; border-radius: 10px;
+    background: root.active ? Theme.acc.with-alpha(0.22) : (ta.has-hover ? Theme.card : transparent);
+    Text {
+        text: root.text; color: root.active ? Theme.acc : Theme.fg; font-weight: 700; font-size: 14px;
+        horizontal-alignment: root.vertical ? TextHorizontalAlignment.left : TextHorizontalAlignment.center;
+        vertical-alignment: center; x: root.vertical ? 16px : 0px; width: parent.width - (root.vertical ? 16px : 0px);
+    }
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
+
+component EventRow inherits Rectangle {
+    in property <EventItem> ev;
+    callback record();
+    callback cancel();
+    height: 92px;
+    Rectangle {
+        y: 4px; height: parent.height - 8px; background: Theme.card; border-radius: 8px;
+        HorizontalLayout {
+            padding: 10px; spacing: 10px;
+            VerticalLayout {
+                horizontal-stretch: 1; spacing: 2px; alignment: center;
+                Text { text: root.ev.channel != "" ? root.ev.when + "  ·  " + root.ev.channel : root.ev.when; color: Theme.fg-dim; font-size: 12px; overflow: elide; }
+                Text { text: root.ev.title; color: Theme.fg; font-weight: 700; overflow: elide; }
+                Text { text: root.ev.summary; color: Theme.fg-dim; font-size: 12px; overflow: elide; }
+            }
+            VerticalLayout {
+                alignment: center; spacing: 4px; width: 92px;
+                if root.ev.state != "": Text { text: "● " + root.ev.state; color: Theme.c-bad; font-size: 12px; horizontal-alignment: right; }
+                TButton {
+                    text: root.ev.dvr-uuid != "" ? "Cancel" : "Record"; height: 34px;
+                    clicked => { if root.ev.dvr-uuid != "" { root.cancel(); } else { root.record(); } }
+                }
+            }
+        }
+    }
+}
+
+component RecRow inherits Rectangle {
+    in property <RecItem> rec;
+    in property <int> kind; // 0 upcoming, 1 finished, 2 failed
+    callback stop();
+    callback cancel();
+    callback remove();
+    height: 84px;
+    Rectangle {
+        y: 4px; height: parent.height - 8px; background: Theme.card; border-radius: 8px;
+        HorizontalLayout {
+            padding: 10px; spacing: 10px;
+            VerticalLayout {
+                horizontal-stretch: 1; spacing: 2px; alignment: center;
+                Text { text: root.rec.title; color: Theme.fg; font-weight: 700; overflow: elide; }
+                Text { text: root.rec.channel + "  ·  " + root.rec.when; color: Theme.fg-dim; font-size: 12px; overflow: elide; }
+                Text { text: root.rec.status; color: root.rec.running ? Theme.c-bad : Theme.fg-dim; font-size: 12px; overflow: elide; }
+            }
+            VerticalLayout {
+                alignment: center; spacing: 4px; width: 92px;
+                if root.rec.running: TButton { text: "Stop"; height: 34px; clicked => { root.stop(); } }
+                if !root.rec.running && root.kind == 0: TButton { text: "Cancel"; height: 34px; clicked => { root.cancel(); } }
+                if !root.rec.running && root.kind != 0: TButton { text: "Delete"; height: 34px; clicked => { root.remove(); } }
+            }
+        }
+    }
+}
+
+component AppearancePanel inherits VerticalLayout {
+    callback apply(int, int, int);
+    padding: 20px; spacing: 12px; alignment: start;
+    Text { text: "Appearance"; color: Theme.fg; font-size: 22px; font-weight: 700; }
+    Text { text: "Style"; color: Theme.fg-dim; }
+    mode := ComboBox {
+        model: ["Catppuccin", "AMOLED black", "System (native)"]; current-index: 0;
+        selected => { root.apply(flavor.current-index, accent.current-index, mode.current-index); }
+    }
+    Text { text: "Flavor"; color: Theme.fg-dim; }
+    flavor := ComboBox {
+        model: ["Latte", "Frappé", "Macchiato", "Mocha"]; current-index: 2;
+        selected => { root.apply(flavor.current-index, accent.current-index, mode.current-index); }
+    }
+    Text { text: "Accent"; color: Theme.fg-dim; }
+    accent := ComboBox {
+        model: ["Rosewater", "Flamingo", "Pink", "Mauve", "Red", "Maroon", "Peach", "Yellow", "Green", "Teal", "Sky", "Sapphire", "Blue", "Lavender"];
+        current-index: 3;
+        selected => { root.apply(flavor.current-index, accent.current-index, mode.current-index); }
+    }
+}
+
+component Header inherits Rectangle {
+    in property <string> title;
+    background: Theme.bar; height: 52px;
+    Text { x: 16px; text: root.title; color: Theme.fg; font-size: 20px; font-weight: 700; vertical-alignment: center; height: parent.height; }
+    @children
+}
+
 export component MainWindow inherits Window {
     title: "TVHme";
-    min-width: 360px; min-height: 560px; preferred-width: 900px; preferred-height: 640px;
+    min-width: 360px; min-height: 560px; preferred-width: 1000px; preferred-height: 680px;
     background: Theme.bg;
     property <bool> dark: Theme.dark;
     property <bool> sys: Theme.use-system;
@@ -102,13 +216,30 @@ export component MainWindow inherits Window {
     function sync-scheme() {
         Palette.color-scheme = root.sys ? ColorScheme.unknown : (root.dark ? ColorScheme.dark : ColorScheme.light);
     }
+    property <bool> wide: root.width >= 720px;
 
-    // 0 = connect, 1 = channels, 2 = settings, 3 = server (admin only)
+    // 0 = connect, 1 = main shell, 2 = appearance (before connecting)
     in-out property <int> screen: 0;
+    // shell tab ids: 0 Live, 1 Guide, 2 Recordings, 3 Search, 4 Server (admin), 5 Settings
+    in-out property <int> tab: 0;
     in property <bool> busy: false;
     in property <string> error;
     in property <bool> is-admin: false;
+    in property <[NavItem]> nav;
+    in-out property <string> toast;
     in property <[ChannelItem]> channels;
+    in property <[TagItem]> tags;
+    in property <[string]> channel-names;
+    in-out property <int> guide-index: 0;
+    in property <[EventItem]> guide-events;
+    in property <bool> guide-busy: false;
+    in-out property <string> search-text;
+    in-out property <bool> search-full: true;
+    in property <[EventItem]> search-events;
+    in property <string> search-note;
+    in-out property <int> rec-kind: 0;
+    in property <[RecItem]> recordings;
+    in property <string> rec-note;
     in property <string> now-playing;
     in property <string> play-note;
     in property <bool> has-signal: false;
@@ -131,127 +262,227 @@ export component MainWindow inherits Window {
     in-out property <string> password;
 
     callback connect(string, string, string, string, bool);
+    callback tab-changed(int);
+    callback select-tag(string);
     callback play(string);
+    callback record-now(string, string);
     callback stop-playback();
+    callback load-guide(int);
+    callback do-search(string, bool);
+    callback record-event(int);
+    callback cancel-recording(string);
+    callback stop-recording(string);
+    callback remove-recording(string);
+    callback load-recordings(int);
     callback apply-theme(int, int, int);
     callback refresh-server();
 
-    VerticalLayout {
-        padding-top: max(root.safe-area-insets.top, root.extra-top);
-        padding-bottom: root.safe-area-insets.bottom;
-        padding-left: root.safe-area-insets.left;
-        padding-right: root.safe-area-insets.right;
-        if root.screen == 0: Rectangle {
-            VerticalLayout {
-                alignment: center; padding: 24px; spacing: 10px;
-                Text { text: "TVHme"; color: Theme.acc; font-size: 36px; font-weight: 800; horizontal-alignment: center; }
-                Text { text: "Connect to Tvheadend"; color: Theme.fg-dim; horizontal-alignment: center; }
-                host-edit := TField { placeholder: "Server, e.g. 10.0.0.5:9981 or https://tv.example.com"; text <=> root.host; }
-                HorizontalLayout {
-                    spacing: 8px;
-                    Text { text: "HTSP port (signal)"; color: Theme.fg-dim; vertical-alignment: center; }
-                    TField { placeholder: "9982"; text <=> root.htsp-port; kind: InputType.number; }
-                }
-                user-edit := TField { placeholder: "Username"; text <=> root.user; }
-                pass-edit := TField { placeholder: "Password"; kind: InputType.password; text <=> root.password; }
-                CheckBox { text: "Allow self-signed certificate"; checked <=> root.insecure; }
-                TButton {
-                    text: root.busy ? "Connecting…" : "Connect"; primary: true; enabled: !root.busy;
-                    clicked => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure); }
-                }
-                if root.error != "": Text { text: root.error; color: Theme.c-bad; wrap: word-wrap; horizontal-alignment: center; }
-                TButton { text: "Appearance"; clicked => { root.screen = 2; } }
+    Timer {
+        interval: 4s; running: root.toast != "";
+        triggered => { root.toast = ""; }
+    }
+
+    Rectangle {
+        x: root.safe-area-insets.left; y: max(root.safe-area-insets.top, root.extra-top);
+        width: parent.width - root.safe-area-insets.left - root.safe-area-insets.right;
+        height: parent.height - max(root.safe-area-insets.top, root.extra-top) - root.safe-area-insets.bottom;
+
+        if root.screen == 0: VerticalLayout {
+            alignment: center; padding: 24px; spacing: 10px;
+            Text { text: "TVHme"; color: Theme.acc; font-size: 36px; font-weight: 800; horizontal-alignment: center; }
+            Text { text: "Connect to Tvheadend"; color: Theme.fg-dim; horizontal-alignment: center; }
+            TField { placeholder: "Server, e.g. 10.0.0.5:9981 or https://tv.example.com"; text <=> root.host; }
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: "HTSP port (signal)"; color: Theme.fg-dim; vertical-alignment: center; }
+                TField { placeholder: "9982"; text <=> root.htsp-port; kind: InputType.number; }
             }
+            TField { placeholder: "Username"; text <=> root.user; }
+            TField { placeholder: "Password"; kind: InputType.password; text <=> root.password; }
+            CheckBox { text: "Allow self-signed certificate"; checked <=> root.insecure; }
+            TButton {
+                text: root.busy ? "Connecting…" : "Connect"; primary: true; enabled: !root.busy;
+                clicked => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure); }
+            }
+            if root.error != "": Text { text: root.error; color: Theme.c-bad; wrap: word-wrap; horizontal-alignment: center; }
+            TButton { text: "Appearance"; clicked => { root.screen = 2; } }
         }
-        if root.screen == 1: VerticalLayout {
+
+        if root.screen == 2: VerticalLayout {
+            AppearancePanel { apply(f, a, m) => { root.apply-theme(f, a, m); } }
+            VerticalLayout { padding: 20px; TButton { text: "Back"; primary: true; clicked => { root.screen = 0; } } }
+        }
+
+        if root.screen == 1: Rectangle {
+            // navigation: rail on wide windows, bar at the bottom on narrow ones
             Rectangle {
-                background: Theme.bar; height: 52px;
-                HorizontalLayout {
-                    padding-left: 16px; padding-right: 8px; spacing: 8px;
-                    Text { text: "Channels"; color: Theme.fg; font-size: 20px; font-weight: 700; vertical-alignment: center; }
-                    Rectangle { horizontal-stretch: 1; }
-                    if root.is-admin: VerticalLayout { alignment: center; TButton { text: "Server"; width: 84px; height: 36px; clicked => { root.screen = 3; root.refresh-server(); } } }
-                    VerticalLayout { alignment: center; TButton { text: "Appearance"; width: 110px; height: 36px; clicked => { root.screen = 2; } } }
+                x: 0; y: root.wide ? 0px : parent.height - 60px;
+                width: root.wide ? 200px : parent.width; height: root.wide ? parent.height : 60px;
+                background: Theme.bar;
+                if root.wide: VerticalLayout {
+                    padding: 12px; spacing: 6px; alignment: start;
+                    Text { text: "TVHme"; color: Theme.acc; font-size: 24px; font-weight: 800; }
+                    Rectangle { height: 10px; }
+                    for n in root.nav: NavButton {
+                        text: n.label; vertical: true; active: root.tab == n.id;
+                        clicked => { root.tab = n.id; root.tab-changed(n.id); }
+                    }
+                }
+                if !root.wide: HorizontalLayout {
+                    padding: 6px; spacing: 4px;
+                    for n in root.nav: NavButton {
+                        text: n.label; vertical: false; active: root.tab == n.id;
+                        clicked => { root.tab = n.id; root.tab-changed(n.id); }
+                    }
                 }
             }
-            ListView {
-                for ch in root.channels: Rectangle {
-                    height: 56px;
-                    background: ta.has-hover ? Theme.card-hi : transparent;
-                    HorizontalLayout {
-                        padding-left: 16px; padding-right: 12px; spacing: 12px;
-                        Text { text: ch.number; color: Theme.fg-dim; width: 36px; vertical-alignment: center; }
-                        VerticalLayout {
-                            alignment: center; horizontal-stretch: 1;
-                            Text { text: ch.name; color: Theme.fg; overflow: elide; }
-                            if ch.now != "": Text { text: ch.now; color: Theme.fg-dim; font-size: 12px; overflow: elide; }
+            Rectangle {
+                x: root.wide ? 200px : 0px; y: 0;
+                width: root.wide ? parent.width - 200px : parent.width;
+                height: root.wide ? parent.height : parent.height - 60px;
+
+                // ---- Live
+                if root.tab == 0: VerticalLayout {
+                    Header { title: "Live TV"; }
+                    Flickable {
+                        height: 50px; content-width: chips.preferred-width + 24px;
+                        chips := HorizontalLayout {
+                            x: 12px; y: 8px; spacing: 8px; height: 34px;
+                            for t in root.tags: Chip { text: t.name; active: t.selected; clicked => { root.select-tag(t.uuid); } }
                         }
                     }
-                    ta := TouchArea { clicked => { root.play(ch.uuid); } }
-                }
-            }
-            if root.now-playing != "": Rectangle {
-                background: Theme.bar; height: 128px;
-                VerticalLayout {
-                    padding: 12px; spacing: 6px;
-                    HorizontalLayout {
-                        Text { text: root.now-playing; color: Theme.fg; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; }
-                        TButton { text: "Stop"; clicked => { root.stop-playback(); } }
+                    ListView {
+                        for ch in root.channels: Rectangle {
+                            height: 60px;
+                            background: ta.has-hover ? Theme.card-hi : transparent;
+                            ta := TouchArea { clicked => { root.play(ch.uuid); } }
+                            HorizontalLayout {
+                                padding-left: 16px; padding-right: 12px; spacing: 12px;
+                                Text { text: ch.number; color: Theme.fg-dim; width: 36px; vertical-alignment: center; }
+                                VerticalLayout {
+                                    alignment: center; horizontal-stretch: 1;
+                                    Text { text: ch.name; color: Theme.fg; overflow: elide; }
+                                    if ch.now != "": Text { text: ch.now; color: Theme.fg-dim; font-size: 12px; overflow: elide; }
+                                }
+                                VerticalLayout { alignment: center; TButton { text: "● Rec"; width: 76px; height: 34px; clicked => { root.record-now(ch.uuid, ch.name); } } }
+                            }
+                        }
                     }
-                    if root.has-signal && root.snr-text != "": SignalMeter { label: "SNR"; value: root.snr; text: root.snr-text; }
-                    if root.has-signal && root.ss-text != "": SignalMeter { label: "SS"; value: root.ss; text: root.ss-text; }
-                    if root.play-note != "": Text { text: root.play-note; color: Theme.c-warn; font-size: 12px; }
-                    if !root.has-signal && root.play-note == "": Text { text: "Waiting for signal info…"; color: Theme.fg-dim; font-size: 12px; }
+                    if root.now-playing != "": Rectangle {
+                        background: Theme.bar; height: 128px;
+                        VerticalLayout {
+                            padding: 12px; spacing: 6px;
+                            HorizontalLayout {
+                                Text { text: root.now-playing; color: Theme.fg; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; }
+                                TButton { text: "Stop"; width: 72px; clicked => { root.stop-playback(); } }
+                            }
+                            if root.has-signal && root.snr-text != "": SignalMeter { label: "SNR"; value: root.snr; text: root.snr-text; }
+                            if root.has-signal && root.ss-text != "": SignalMeter { label: "SS"; value: root.ss; text: root.ss-text; }
+                            if root.play-note != "": Text { text: root.play-note; color: Theme.c-warn; font-size: 12px; }
+                            if !root.has-signal && root.play-note == "": Text { text: "Waiting for signal info…"; color: Theme.fg-dim; font-size: 12px; }
+                        }
+                    }
                 }
-            }
-        }
-        if root.screen == 2: VerticalLayout {
-            padding: 20px; spacing: 12px; alignment: start;
-            Text { text: "Appearance"; color: Theme.fg; font-size: 22px; font-weight: 700; }
-            Text { text: "Style"; color: Theme.fg-dim; }
-            mode := ComboBox {
-                model: ["Catppuccin", "AMOLED black", "System (native)"]; current-index: 0;
-                selected => { root.apply-theme(flavor.current-index, accent.current-index, mode.current-index); }
-            }
-            Text { text: "Flavor"; color: Theme.fg-dim; }
-            flavor := ComboBox {
-                model: ["Latte", "Frappé", "Macchiato", "Mocha"]; current-index: 2;
-                selected => { root.apply-theme(flavor.current-index, accent.current-index, mode.current-index); }
-            }
-            Text { text: "Accent"; color: Theme.fg-dim; }
-            accent := ComboBox {
-                model: ["Rosewater", "Flamingo", "Pink", "Mauve", "Red", "Maroon", "Peach", "Yellow", "Green", "Teal", "Sky", "Sapphire", "Blue", "Lavender"];
-                current-index: 3;
-                selected => { root.apply-theme(flavor.current-index, accent.current-index, mode.current-index); }
-            }
-            TButton { text: "Back"; primary: true; clicked => { root.screen = root.channels.length > 0 ? 1 : 0; } }
-        }
-        if root.screen == 3: VerticalLayout {
-            Rectangle {
-                background: Theme.bar; height: 52px;
-                HorizontalLayout {
-                    padding-left: 16px; padding-right: 8px; spacing: 8px;
-                    Text { text: "Server"; color: Theme.fg; font-size: 20px; font-weight: 700; vertical-alignment: center; }
-                    Rectangle { horizontal-stretch: 1; }
-                    VerticalLayout { alignment: center; TButton { text: root.server-busy ? "…" : "Refresh"; enabled: !root.server-busy; width: 90px; height: 36px; clicked => { root.refresh-server(); } } }
-                    VerticalLayout { alignment: center; TButton { text: "Back"; width: 72px; height: 36px; clicked => { root.screen = 1; } } }
-                }
-            }
-            ScrollView {
-                VerticalLayout {
-                    padding: 16px; spacing: 16px; alignment: start;
+
+                // ---- Guide
+                if root.tab == 1: VerticalLayout {
+                    Header { title: "Guide"; }
                     VerticalLayout {
-                        spacing: 4px;
-                        Text { text: root.me-text; color: Theme.fg; font-weight: 700; wrap: word-wrap; }
-                        Text { text: root.server-info; color: Theme.fg-dim; wrap: word-wrap; font-size: 13px; }
-                        if root.server-error != "": Text { text: root.server-error; color: Theme.c-bad; wrap: word-wrap; }
+                        padding: 12px; spacing: 8px;
+                        ComboBox {
+                            model: root.channel-names; current-index <=> root.guide-index;
+                            selected(v) => { root.load-guide(self.current-index); }
+                        }
                     }
-                    InfoSection { heading: "Tuners"; rows: root.tuners; empty-text: "No tuner information"; }
-                    InfoSection { heading: "Active streams"; rows: root.streams; empty-text: "No active streams"; }
-                    InfoSection { heading: "Connected clients"; rows: root.clients; empty-text: "No connected clients"; }
-                    Text { text: "More management (channels, networks, recorder settings, users) is planned. The server decides what each account may change."; color: Theme.fg-dim; wrap: word-wrap; font-size: 12px; }
+                    if root.guide-events.length == 0: Text { text: root.guide-busy ? "Loading…" : "No guide data for this channel"; color: Theme.fg-dim; horizontal-alignment: center; }
+                    ListView {
+                        for ev in root.guide-events: EventRow {
+                            ev: ev;
+                            record => { root.record-event(ev.id); }
+                            cancel => { root.cancel-recording(ev.dvr-uuid); }
+                        }
+                    }
+                }
+
+                // ---- Recordings
+                if root.tab == 2: VerticalLayout {
+                    Header { title: "Recordings"; }
+                    HorizontalLayout {
+                        padding: 12px; spacing: 8px; height: 58px;
+                        Chip { text: "Upcoming"; active: root.rec-kind == 0; clicked => { root.rec-kind = 0; root.load-recordings(0); } }
+                        Chip { text: "Finished"; active: root.rec-kind == 1; clicked => { root.rec-kind = 1; root.load-recordings(1); } }
+                        Chip { text: "Failed"; active: root.rec-kind == 2; clicked => { root.rec-kind = 2; root.load-recordings(2); } }
+                    }
+                    if root.rec-note != "": Text { text: root.rec-note; color: Theme.fg-dim; horizontal-alignment: center; wrap: word-wrap; }
+                    ListView {
+                        for r in root.recordings: RecRow {
+                            rec: r; kind: root.rec-kind;
+                            stop => { root.stop-recording(r.uuid); }
+                            cancel => { root.cancel-recording(r.uuid); }
+                            remove => { root.remove-recording(r.uuid); }
+                        }
+                    }
+                }
+
+                // ---- Search
+                if root.tab == 3: VerticalLayout {
+                    Header { title: "Search the guide"; }
+                    VerticalLayout {
+                        padding: 12px; spacing: 8px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            TField { placeholder: "Title or text"; text <=> root.search-text; }
+                            TButton { text: "Search"; primary: true; width: 90px; clicked => { root.do-search(root.search-text, root.search-full); } }
+                        }
+                        CheckBox { text: "Also search descriptions"; checked <=> root.search-full; }
+                    }
+                    if root.search-note != "": Text { text: root.search-note; color: Theme.fg-dim; horizontal-alignment: center; }
+                    ListView {
+                        for ev in root.search-events: EventRow {
+                            ev: ev;
+                            record => { root.record-event(ev.id); }
+                            cancel => { root.cancel-recording(ev.dvr-uuid); }
+                        }
+                    }
+                }
+
+                // ---- Server (admin)
+                if root.tab == 4: VerticalLayout {
+                    Header {
+                        title: "Server";
+                        TButton { x: parent.width - 98px; y: 8px; text: root.server-busy ? "…" : "Refresh"; enabled: !root.server-busy; width: 90px; height: 36px; clicked => { root.refresh-server(); } }
+                    }
+                    ScrollView {
+                        VerticalLayout {
+                            padding: 16px; spacing: 16px; alignment: start;
+                            VerticalLayout {
+                                spacing: 4px;
+                                Text { text: root.me-text; color: Theme.fg; font-weight: 700; wrap: word-wrap; }
+                                Text { text: root.server-info; color: Theme.fg-dim; wrap: word-wrap; font-size: 13px; }
+                                if root.server-error != "": Text { text: root.server-error; color: Theme.c-bad; wrap: word-wrap; }
+                            }
+                            InfoSection { heading: "Tuners"; rows: root.tuners; empty-text: "No tuner information"; }
+                            InfoSection { heading: "Active streams"; rows: root.streams; empty-text: "No active streams"; }
+                            InfoSection { heading: "Connected clients"; rows: root.clients; empty-text: "No connected clients"; }
+                            Text { text: "More management (channels, networks, recorder settings, users) is planned. The server decides what each account may change."; color: Theme.fg-dim; wrap: word-wrap; font-size: 12px; }
+                        }
+                    }
+                }
+
+                // ---- Settings
+                if root.tab == 5: VerticalLayout {
+                    Header { title: "Settings"; }
+                    Text { x: 0; text: root.me-text; color: Theme.fg-dim; wrap: word-wrap; }
+                    AppearancePanel { apply(f, a, m) => { root.apply-theme(f, a, m); } }
                 }
             }
         }
+    }
+
+    if root.toast != "": Rectangle {
+        x: (parent.width - self.width) / 2; y: parent.height - self.height - (root.wide ? 24px : 84px);
+        width: min(parent.width - 32px, 560px); height: 44px;
+        background: Theme.card-hi; border-radius: 10px; border-width: 1px; border-color: Theme.acc;
+        Text { text: root.toast; color: Theme.fg; horizontal-alignment: center; vertical-alignment: center; overflow: elide; width: parent.width - 20px; x: 10px; }
     }
 }
