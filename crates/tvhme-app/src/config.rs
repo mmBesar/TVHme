@@ -15,6 +15,10 @@ pub struct Saved {
     pub user: String,
     pub pass: String,
     pub insecure: bool,
+    /// Persistent authentication code (optional alternative to the password for streams).
+    pub auth_code: String,
+    /// Go straight into the app at startup (cleared by "Sign out").
+    pub auto_login: bool,
     pub mode: i32,
     pub flavor: i32,
     pub accent: i32,
@@ -25,7 +29,7 @@ impl Default for Saved {
     fn default() -> Self {
         // Catppuccin Macchiato + Mauve, HTSP on Tvheadend's usual port
         Saved { address: String::new(), htsp_port: "9982".into(), user: String::new(), pass: String::new(),
-                insecure: false, mode: 0, flavor: 2, accent: 3, player: 0 }
+                insecure: false, auth_code: String::new(), auto_login: false, mode: 0, flavor: 2, accent: 3, player: 0 }
     }
 }
 

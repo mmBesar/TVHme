@@ -316,13 +316,14 @@ export component MainWindow inherits Window {
     in-out property <bool> insecure: false;
     in-out property <string> user;
     in-out property <string> password;
+    in-out property <string> auth-code;
     in-out property <int> t-mode: 0;
     in-out property <int> t-flavor: 2;
     in-out property <int> t-accent: 3;
     in-out property <int> player: 0;
     in property <[string]> player-names;
 
-    callback connect(string, string, string, string, bool);
+    callback connect(string, string, string, string, bool, string);
     callback tab-changed(int);
     callback select-tag(string);
     callback play(string);
@@ -339,6 +340,7 @@ export component MainWindow inherits Window {
     callback refresh-server();
     callback play-recording(string);
     callback sign-out();
+    callback edit-connection();
     callback player-changed(int);
 
     Timer {
@@ -357,23 +359,30 @@ export component MainWindow inherits Window {
                 alignment: center; padding: 24px; spacing: 10px;
                 Text { text: "TVHme"; color: Theme.acc; font-size: 36px; font-weight: 800; horizontal-alignment: center; }
                 Text { text: "Connect to Tvheadend"; color: Theme.fg-dim; horizontal-alignment: center; }
-                TField { placeholder: "Server address"; text <=> root.host; accepted => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure); } }
+                TField { placeholder: "Server address"; text <=> root.host; accepted => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure, root.auth-code); } }
                 Text { text: "e.g. 10.0.0.5:9981 or https://tv.example.com"; color: Theme.fg-dim; font-size: 12px; wrap: word-wrap; }
                 HorizontalLayout {
                     spacing: 8px;
                     Text { text: "HTSP port (signal)"; color: Theme.fg-dim; vertical-alignment: center; }
-                    TField { placeholder: "9982"; text <=> root.htsp-port; kind: InputType.number; accepted => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure); } }
+                    TField { placeholder: "9982"; text <=> root.htsp-port; kind: InputType.number; accepted => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure, root.auth-code); } }
                 }
-                TField { placeholder: "Username"; text <=> root.user; accepted => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure); } }
-                TField { placeholder: "Password"; kind: InputType.password; text <=> root.password; accepted => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure); } }
+                TField { placeholder: "Username"; text <=> root.user; accepted => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure, root.auth-code); } }
+                TField { placeholder: "Password"; kind: InputType.password; text <=> root.password; accepted => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure, root.auth-code); } }
+                TField { placeholder: "Access code (optional, instead of password)"; kind: InputType.password; text <=> root.auth-code; accepted => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure, root.auth-code); } }
                 CheckBox { text: "Allow self-signed certificate"; checked <=> root.insecure; }
                 TButton {
                     text: root.busy ? "Connecting…" : "Connect"; primary: true; enabled: !root.busy;
-                    clicked => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure); }
+                    clicked => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure, root.auth-code); }
                 }
                 if root.error != "": Text { text: root.error; color: Theme.c-bad; wrap: word-wrap; horizontal-alignment: center; }
                 TButton { text: "Appearance"; clicked => { root.screen = 2; } }
             }
+        }
+
+        if root.screen == 3: VerticalLayout {
+            alignment: center; spacing: 12px;
+            Text { text: "TVHme"; color: Theme.acc; font-size: 36px; font-weight: 800; horizontal-alignment: center; }
+            Text { text: "Connecting…"; color: Theme.fg-dim; horizontal-alignment: center; }
         }
 
         if root.screen == 2: VerticalLayout {
@@ -460,8 +469,9 @@ export component MainWindow inherits Window {
                 if root.tab == 1: VerticalLayout {
                     Header { title: "Guide"; }
                     VerticalLayout {
-                        padding: 12px; spacing: 8px;
+                        padding: 12px; spacing: 8px; height: 66px;
                         TSelect {
+                            height: 42px;
                             model: root.channel-names; current-index <=> root.guide-index;
                             selected(i) => { root.load-guide(i); }
                         }
@@ -501,9 +511,9 @@ export component MainWindow inherits Window {
                 if root.tab == 3: VerticalLayout {
                     Header { title: "Search the guide"; }
                     VerticalLayout {
-                        padding: 12px; spacing: 8px;
+                        padding: 12px; spacing: 8px; height: 104px;
                         HorizontalLayout {
-                            spacing: 8px;
+                            spacing: 8px; height: 42px;
                             TField { placeholder: "Title or text"; text <=> root.search-text; accepted => { root.do-search(root.search-text, root.search-full); } }
                             TButton { text: "Search"; primary: true; width: 90px; clicked => { root.do-search(root.search-text, root.search-full); } }
                         }
@@ -550,10 +560,16 @@ export component MainWindow inherits Window {
                             alignment: start;
                             VerticalLayout {
                                 padding: 20px; padding-bottom: 0px; spacing: 8px;
+                                Text { text: "Connection"; color: Theme.fg; font-size: 22px; font-weight: 700; }
+                                Text { text: root.server-info; color: Theme.fg-dim; wrap: word-wrap; font-size: 13px; }
                                 Text { text: root.me-text; color: Theme.fg-dim; wrap: word-wrap; }
+                                HorizontalLayout {
+                                    spacing: 8px; height: 42px;
+                                    TButton { text: "Edit connection"; clicked => { root.edit-connection(); } }
+                                    TButton { text: "Sign out"; clicked => { root.sign-out(); } }
+                                }
                                 Text { text: "Video player"; color: Theme.fg; font-size: 22px; font-weight: 700; }
                                 TSelect { model: root.player-names; current-index <=> root.player; selected(i) => { root.player-changed(i); } }
-                                TButton { text: "Sign out (forget password)"; clicked => { root.sign-out(); } }
                             }
                             AppearancePanel {
                                 mode-index <=> root.t-mode; flavor-index <=> root.t-flavor; accent-index <=> root.t-accent;

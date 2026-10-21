@@ -5,7 +5,7 @@ use tvhme_core::permissions::{ProbeError, Section};
 use tvhme_core::session::{ConnectOptions, Session, SessionError, SignalSource};
 
 fn opts(addr: String, user: &str, pass: &str, htsp: Option<u16>) -> ConnectOptions {
-    ConnectOptions { address: addr, user: user.into(), pass: pass.into(), htsp_port: htsp, insecure_tls: false }
+    ConnectOptions { address: addr, user: user.into(), pass: pass.into(), htsp_port: htsp, insecure_tls: false, auth_code: String::new() }
 }
 fn addr(m: &tvhme_mock::MockServer) -> String { format!("127.0.0.1:{}", m.http.port()) }
 
@@ -202,4 +202,20 @@ async fn recording_file_plays_for_recorders_and_is_refused_for_others() {
     let no = Session::connect(opts(addr(&m), "viewer", "viewer", None)).await.unwrap();
     let r = reqwest::Client::new().get(no.recording_url("rec-1")).send().await.unwrap();
     assert_eq!(r.status().as_u16(), 403);
+}
+
+#[tokio::test]
+async fn authentication_code_replaces_the_password_for_streams_and_the_api() {
+    let m = tvhme_mock::spawn().await;
+    let mut o = opts(addr(&m), "", "", Some(m.htsp.port()));
+    o.auth_code = tvhme_mock::AUTH_CODE.into();
+    let s = Session::connect(o).await.unwrap();
+    assert_eq!(s.channels.len(), 3);
+    let url = s.playback_url("uuid-two").await;
+    assert!(url.contains("/stream/channel/uuid-two?auth=MOCKCODE") && !url.contains('@'), "{url}");
+    let r = reqwest::Client::new().get(&url).send().await.unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    let mut bad = opts(addr(&m), "", "", None);
+    bad.auth_code = "WRONG".into();
+    assert!(Session::connect(bad).await.is_err());
 }

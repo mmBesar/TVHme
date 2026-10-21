@@ -17,6 +17,8 @@ pub const CHALLENGE: [u8; 32] = [7u8; 32];
 pub const USERS: [(&str, &str, bool); 3] = [("admin", "admin", true), ("user", "user", false), ("viewer", "viewer", false)];
 /// "viewer" may watch but has no recorder permission (DVR calls answer 403), like a restricted Tvheadend account.
 const NO_RECORDER: &str = "viewer";
+/// Persistent authentication code the mock accepts for the account "user".
+pub const AUTH_CODE: &str = "MOCKCODE";
 pub const CHANNELS: [(&str, u32, &str); 3] = [("uuid-one", 1, "Mock One"), ("uuid-two", 2, "Mock Two"), ("uuid-three", 3, "Mock Three")];
 
 #[derive(Clone)]
@@ -205,6 +207,8 @@ async fn http_conn(mut stream: TcpStream, webroot: String, state: Shared) {
     params.extend(parse_params(&body));
     let param = |k: &str| params.iter().find(|(a, _)| a == k).map(|(_, v)| v.clone());
 
+    // Persistent authentication code (`?auth=`), as a Tvheadend admin can hand out per user.
+    let user = user.or_else(|| (param("auth").as_deref() == Some(AUTH_CODE)).then(|| ("user".to_string(), false)));
     let json_ok = |v: String| ("200 OK", "application/json", v.into_bytes());
     let forbidden = || ("403 Forbidden", "text/plain", b"forbidden".to_vec());
     let ticket_ok = path.starts_with("/stream/channelid/") && path_q.contains("ticket=TICKET123");

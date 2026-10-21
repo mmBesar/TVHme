@@ -74,6 +74,25 @@ impl ServerAddress {
     }
 }
 
+/// `http://user:pass@host:9981/path?ticket=abc` -> `http://host:9981/path (ticket)`: where a URL points and
+/// how it logs in, without any secret.
+pub fn redact_url(url: &str) -> String {
+    let (scheme, rest) = url.split_once("://").unwrap_or(("", url));
+    let (hostpath, query) = rest.split_once('?').map_or((rest, ""), |x| x);
+    let (auth, hostpath) = match hostpath.split_once('/') {
+        Some((a, p)) => (a, format!("/{p}")),
+        None => (hostpath, String::new()),
+    };
+    let (has_userinfo, host) = match auth.rsplit_once('@') { Some((_, h)) => (true, h), None => (false, auth) };
+    let mut how: Vec<&str> = Vec::new();
+    if has_userinfo { how.push("password"); }
+    for kv in query.split('&').filter(|k| !k.is_empty()) {
+        match kv.split('=').next().unwrap_or("") { "ticket" => how.push("ticket"), "auth" | "AUTH" => how.push("code"), _ => {} }
+    }
+    let how = if how.is_empty() { String::new() } else { format!(" ({})", how.join(", ")) };
+    format!("{}://{}{}{}", scheme, host, hostpath, how)
+}
+
 pub(crate) fn pct(s: &str) -> String {
     let mut o = String::new();
     for b in s.bytes() {
@@ -118,6 +137,9 @@ mod tests {
         let a = p("tv.lan");
         assert_eq!(a.stream_url("abc123", "bob", "p@ss"), "http://bob:p%40ss@tv.lan:9981/stream/channel/abc123");
         assert_eq!(a.stream_url("abc123", "", ""), "http://tv.lan:9981/stream/channel/abc123");
+        assert_eq!(redact_url("http://bob:p%40ss@tv.lan:9981/stream/channel/abc"), "http://tv.lan:9981/stream/channel/abc (password)");
+        assert_eq!(redact_url("http://tv.lan:9981/stream/channelid/5?ticket=XYZ&profile=pass"), "http://tv.lan:9981/stream/channelid/5 (ticket)");
+        assert_eq!(redact_url("https://t.example/tvh/stream/channel/a?auth=SECRET"), "https://t.example/tvh/stream/channel/a (code)");
         assert_eq!(a.dvr_url("r1", "bob", "p@ss"), "http://bob:p%40ss@tv.lan:9981/dvrfile/r1");
     }
 }

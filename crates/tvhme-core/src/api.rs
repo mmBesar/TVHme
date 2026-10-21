@@ -233,6 +233,7 @@ pub struct Api {
     pub addr: ServerAddress,
     user: String,
     pass: String,
+    auth: String,
 }
 
 impl Api {
@@ -247,17 +248,30 @@ impl Api {
             .danger_accept_invalid_certs(insecure_tls)
             .build()
             .map_err(|e| ApiError::BadResponse(e.to_string()))?;
-        Ok(Api { http, addr, user: user.into(), pass: pass.into() })
+        Ok(Api { http, addr, user: user.into(), pass: pass.into(), auth: String::new() })
     }
 
-    pub fn stream_url(&self, uuid: &str) -> String { self.addr.stream_url(uuid, &self.user, &self.pass) }
-    pub fn dvr_url(&self, uuid: &str) -> String { self.addr.dvr_url(uuid, &self.user, &self.pass) }
+    /// Use the server's persistent authentication code (`?auth=`) instead of a password where possible.
+    pub fn with_auth_code(mut self, code: &str) -> Api { self.auth = code.trim().into(); self }
+    pub fn has_auth_code(&self) -> bool { !self.auth.is_empty() }
+
+    /// Channel stream URL. With an authentication code: `/stream/channel/<uuid>?auth=<code>` (no password in the URL).
+    pub fn stream_url(&self, uuid: &str) -> String {
+        if self.has_auth_code() { return format!("{}?auth={}", self.addr.url(&format!("/stream/channel/{uuid}")), crate::address::pct(&self.auth)); }
+        self.addr.stream_url(uuid, &self.user, &self.pass)
+    }
+    /// Recording URL. The account's password is the reliable way: old servers refuse `auth=` on `/dvrfile`.
+    pub fn dvr_url(&self, uuid: &str) -> String {
+        if self.user.is_empty() && self.has_auth_code() { return format!("{}?auth={}", self.addr.url(&format!("/dvrfile/{uuid}")), crate::address::pct(&self.auth)); }
+        self.addr.dvr_url(uuid, &self.user, &self.pass)
+    }
 
     async fn send_q(&self, method: reqwest::Method, path: &str, query: &[(&str, &str)], form: &[(&str, &str)]) -> Result<reqwest::Response, ApiError> {
         let mut req = self.http.request(method, self.addr.url(path));
         if !query.is_empty() { req = req.query(query); }
         if !form.is_empty() { req = req.form(form); }
         if !self.user.is_empty() { req = req.basic_auth(&self.user, Some(&self.pass)); }
+        else if self.has_auth_code() { req = req.query(&[("auth", self.auth.as_str())]); }
         req.send().await.map_err(|e| classify(e, &self.addr))
     }
 

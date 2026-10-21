@@ -26,6 +26,8 @@ pub struct ConnectOptions {
     pub pass: String,
     pub htsp_port: Option<u16>,
     pub insecure_tls: bool,
+    /// Optional "persistent authentication code" from the server (Users > Persistent authentication code).
+    pub auth_code: String,
 }
 
 /// Everything the admin "Server" screen shows, fetched in one go.
@@ -68,7 +70,7 @@ impl Drop for SignalWatch {
 impl Session {
     pub async fn connect(o: ConnectOptions) -> Result<Session, SessionError> {
         let addr = ServerAddress::parse(&o.address).map_err(|e| ApiError::BadResponse(e.to_string()))?;
-        let api = Api::new(addr.clone(), &o.user, &o.pass, o.insecure_tls)?;
+        let api = Api::new(addr.clone(), &o.user, &o.pass, o.insecure_tls)?.with_auth_code(&o.auth_code);
         let permissions = Permissions::probe(&api).await?;
         let mut channels = api.channels().await?;
         // Now-playing titles are a nicety; never fail the login over them.
@@ -133,6 +135,9 @@ impl Session {
     /// Credentials-in-URL fallback (`/stream/channel/<uuid>`). Prefer `playback_url`.
     pub fn stream_url(&self, uuid: &str) -> String { self.api.stream_url(uuid) }
 
+    /// How a URL authenticates, for showing the person: never includes the secret itself.
+    pub fn describe_url(url: &str) -> String { crate::address::redact_url(url) }
+
     /// Playback URL of a recording (`/dvrfile/<uuid>`); the server checks the account's recorder rights.
     pub fn recording_url(&self, uuid: &str) -> String { self.api.dvr_url(uuid) }
 
@@ -140,6 +145,7 @@ impl Session {
     /// (`getTicket`) and play `<base><path>?ticket=..&profile=pass`, so no password is put in the URL.
     /// Falls back to the credentials URL when HTSP is not reachable or the server refuses.
     pub async fn playback_url(&self, uuid: &str) -> String {
+        if self.api.has_auth_code() { return self.stream_url(uuid); } // the code needs no HTSP and no ticket
         if let Some(h) = &self.htsp {
             if let Some(&cid) = h.ids.get(uuid) {
                 let mut f = Map::new();

@@ -148,6 +148,8 @@ fn start_playback(w: slint::Weak<MainWindow>, session: Shared, slot: Slot, targe
         }
         let url = match &target { Target::Channel(u) => s.playback_url(u).await, Target::Recording(u) => s.recording_url(u) };
         let (kill_tx, kill_rx) = tokio::sync::oneshot::channel::<()>();
+        #[cfg(target_os = "android")]
+        { let d = format!("Sent to the player: {}", Session::describe_url(&url)); ui_do(&w, move |ui| ui.set_play_note(d.into())); }
 
         #[cfg(not(target_os = "android"))]
         let child = match player::spawn(&url, &title, choice) {
@@ -221,6 +223,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
     ui.set_htsp_port(saved.htsp_port.clone().into());
     ui.set_user(saved.user.clone().into());
     ui.set_password(saved.pass.clone().into());
+    ui.set_auth_code(saved.auth_code.clone().into());
     ui.set_insecure(saved.insecure);
     ui.set_t_mode(saved.mode); ui.set_t_flavor(saved.flavor); ui.set_t_accent(saved.accent);
     ui.set_player(saved.player);
@@ -240,11 +243,11 @@ pub fn run() -> Result<(), slint::PlatformError> {
     ui.on_connect({
         let w = ui.as_weak();
         let session = session.clone();
-        move |address, htsp, user, pass, insecure| {
+        move |address, htsp, user, pass, insecure, code| {
             if let Some(ui) = w.upgrade() { ui.set_busy(true); ui.set_error("".into()); }
             let opts = ConnectOptions {
                 address: address.to_string(), user: user.to_string(), pass: pass.to_string(),
-                htsp_port: htsp.parse::<u16>().ok(), insecure_tls: insecure,
+                htsp_port: htsp.parse::<u16>().ok(), insecure_tls: insecure, auth_code: code.to_string(),
             };
             let (w, session) = (w.clone(), session.clone());
             rt().spawn(async move {
@@ -262,6 +265,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                         config::update(|c| {
                             c.address = opts.address.clone(); c.htsp_port = opts.htsp_port.map(|p| p.to_string()).unwrap_or_default();
                             c.user = opts.user.clone(); c.pass = opts.pass.clone(); c.insecure = opts.insecure_tls;
+                            c.auth_code = opts.auth_code.clone(); c.auto_login = true;
                         });
                         *session.lock().await = Some(s);
                         let _ = slint::invoke_from_event_loop(move || {
@@ -280,7 +284,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                     Err(e) => {
                         let msg = e.to_string();
                         let _ = slint::invoke_from_event_loop(move || {
-                            if let Some(ui) = w.upgrade() { ui.set_busy(false); ui.set_error(msg.into()); }
+                            if let Some(ui) = w.upgrade() { ui.set_busy(false); ui.set_error(msg.into()); ui.set_screen(0); }
                         });
                     }
                 }
@@ -433,6 +437,18 @@ pub fn run() -> Result<(), slint::PlatformError> {
         }
     });
 
+    ui.on_edit_connection({
+        let (w, session, slot) = (ui.as_weak(), session.clone(), slot.clone());
+        move || {
+            drop(slot.lock().unwrap().take());
+            let (w, session) = (w.clone(), session.clone());
+            rt().spawn(async move {
+                *session.lock().await = None;
+                ui_do(&w, |ui| { ui.set_now_playing("".into()); ui.set_has_signal(false); ui.set_tab(0); ui.set_screen(0); });
+            });
+        }
+    });
+
     ui.on_player_changed(|i| config::update(|c| c.player = i));
 
     ui.on_stop_playback({
@@ -447,12 +463,12 @@ pub fn run() -> Result<(), slint::PlatformError> {
         let (w, session, slot) = (ui.as_weak(), session.clone(), slot.clone());
         move || {
             drop(slot.lock().unwrap().take());
-            config::update(|c| c.pass.clear());
+            config::update(|c| { c.pass.clear(); c.auth_code.clear(); c.auto_login = false; });
             let (w, session) = (w.clone(), session.clone());
             rt().spawn(async move {
                 *session.lock().await = None;
                 ui_do(&w, |ui| {
-                    ui.set_password("".into()); ui.set_now_playing("".into()); ui.set_has_signal(false);
+                    ui.set_password("".into()); ui.set_auth_code("".into()); ui.set_now_playing("".into()); ui.set_has_signal(false);
                     ui.set_tab(0); ui.set_screen(0);
                 });
             });
@@ -503,20 +519,29 @@ pub fn run() -> Result<(), slint::PlatformError> {
         }
     });
 
+    // Returning user: go straight in. If it fails the connect screen shows the reason.
+    if saved.auto_login && !saved.address.is_empty() && std::env::var("TVHME_AUTOCONNECT").is_err() {
+        ui.set_screen(3);
+        ui.invoke_connect(saved.address.clone().into(), saved.htsp_port.clone().into(), saved.user.clone().into(),
+                          saved.pass.clone().into(), saved.insecure, saved.auth_code.clone().into());
+    }
+
+    // Developer aid: TVHME_TAB=n opens a tab a moment after start
+    if let Ok(scr) = std::env::var("TVHME_TAB") {
+        if let Ok(n) = scr.parse::<i32>() {
+            let w = ui.as_weak();
+            rt().spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                ui_do(&w, move |ui| { ui.set_tab(n); ui.invoke_tab_changed(n); });
+            });
+        }
+    }
+
     // Developer aid: TVHME_AUTOCONNECT=address,htsp_port,user,pass[,play_channel_uuid]
     if let Ok(v) = std::env::var("TVHME_AUTOCONNECT") {
         let p: Vec<String> = v.split(',').map(str::to_string).collect();
         if p.len() >= 4 {
-            ui.invoke_connect(p[0].clone().into(), p[1].clone().into(), p[2].clone().into(), p[3].clone().into(), false);
-            if let Ok(scr) = std::env::var("TVHME_TAB") {
-                if let Ok(n) = scr.parse::<i32>() {
-                    let w = ui.as_weak();
-                    rt().spawn(async move {
-                        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-                        ui_do(&w, move |ui| { ui.set_tab(n); ui.invoke_tab_changed(n); });
-                    });
-                }
-            }
+            ui.invoke_connect(p[0].clone().into(), p[1].clone().into(), p[2].clone().into(), p[3].clone().into(), false, "".into());
             if let Some(ch) = p.get(4).cloned() {
                 let w = ui.as_weak();
                 rt().spawn(async move {
