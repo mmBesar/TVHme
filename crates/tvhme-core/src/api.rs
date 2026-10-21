@@ -235,6 +235,8 @@ struct RawInput {
 
 pub struct Api {
     http: reqwest::Client,
+    /// Same settings but never follows redirects (used to read the ticket out of `/play/ticket/..`).
+    http_noredir: reqwest::Client,
     pub addr: ServerAddress,
     user: String,
     pass: String,
@@ -244,21 +246,40 @@ pub struct Api {
 impl Api {
     /// `insecure_tls` accepts self-signed certificates (common on home servers).
     pub fn new(addr: ServerAddress, user: &str, pass: &str, insecure_tls: bool) -> Result<Api, ApiError> {
-        let http = reqwest::Client::builder()
+        let build = |policy| reqwest::Client::builder()
             .user_agent(concat!("TVHme/", env!("CARGO_PKG_VERSION")))
             .connect_timeout(Duration::from_secs(6))
             .timeout(Duration::from_secs(20))
-            .redirect(reqwest::redirect::Policy::limited(5))
+            .redirect(policy)
             .no_proxy() // media server on the LAN or behind its own reverse proxy: ignore system proxy variables
             .danger_accept_invalid_certs(insecure_tls)
             .build()
-            .map_err(|e| ApiError::BadResponse(e.to_string()))?;
-        Ok(Api { http, addr, user: user.into(), pass: pass.into(), auth: String::new() })
+            .map_err(|e| ApiError::BadResponse(e.to_string()));
+        let http = build(reqwest::redirect::Policy::limited(5))?;
+        let http_noredir = build(reqwest::redirect::Policy::none())?;
+        Ok(Api { http, http_noredir, addr, user: user.into(), pass: pass.into(), auth: String::new() })
     }
 
     /// Use the server's persistent authentication code (`?auth=`) instead of a password where possible.
     pub fn with_auth_code(mut self, code: &str) -> Api { self.auth = code.trim().into(); self }
     pub fn has_auth_code(&self) -> bool { !self.auth.is_empty() }
+
+    /// Ask the server for a play ticket for `path` (e.g. `/dvrfile/<uuid>`), the way the web interface does:
+    /// `GET /play/ticket<path>` answers with a redirect to `<path>?ticket=...`. Returns the URL to give a player,
+    /// or None when the server does not do tickets (the caller then falls back to the login in the URL).
+    pub async fn ticket_url(&self, path: &str) -> Option<String> {
+        let mut req = self.http_noredir.get(self.addr.url(&format!("/play/ticket{path}")));
+        if !self.user.is_empty() { req = req.basic_auth(&self.user, Some(&self.pass)); }
+        else if self.has_auth_code() { req = req.query(&[("auth", self.auth.as_str())]); }
+        let r = req.send().await.ok()?;
+        let loc = r.headers().get(reqwest::header::LOCATION)?.to_str().ok()?.to_string();
+        // Only the ticket is taken from the answer: the address is rebuilt from what the person typed, so
+        // a reverse proxy that makes the server think it lives elsewhere cannot send the player astray.
+        let t = loc.split_once("ticket=")?.1.split('&').next()?.to_string();
+        if t.is_empty() { return None; }
+        let extra = if path.starts_with("/stream/") { "&profile=pass" } else { "" };
+        Some(format!("{}?ticket={}{}", self.addr.url(path), t, extra))
+    }
 
     /// Channel stream URL. With an authentication code: `/stream/channel/<uuid>?auth=<code>` (no password in the URL).
     pub fn stream_url(&self, uuid: &str) -> String {

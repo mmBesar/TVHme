@@ -43,7 +43,7 @@ component TButton inherits Rectangle {
     background: !enabled ? Theme.card : (primary ? (ta.has-hover ? Theme.acc.brighter(0.15) : Theme.acc) : (ta.has-hover ? Theme.card-hi : Theme.card));
     Text { text: root.text; color: root.primary && root.enabled ? Theme.on-acc : Theme.fg; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
     border-width: fs.has-focus ? 2px : 0px; border-color: Theme.acc;
-    ta := TouchArea { enabled: root.enabled; clicked => { root.clicked(); } }
+    // The focus scope sits under the touch area: a click reaches the button at once (keyboard focus comes from Tab).
     fs := FocusScope {
         enabled: root.enabled;
         key-pressed(e) => {
@@ -51,6 +51,7 @@ component TButton inherits Rectangle {
             reject
         }
     }
+    ta := TouchArea { enabled: root.enabled; clicked => { root.clicked(); } }
 }
 
 component TField inherits Rectangle {
@@ -64,7 +65,7 @@ component TField inherits Rectangle {
     HorizontalLayout {
         padding-left: 12px; padding-right: 12px;
         Rectangle {
-            Text { visible: input.text == ""; text: root.placeholder; color: Theme.fg-dim; vertical-alignment: center; overflow: elide; width: parent.width; }
+            Text { visible: input.text == "" && input.preedit-text == ""; text: root.placeholder; color: Theme.fg-dim; vertical-alignment: center; overflow: elide; width: parent.width; }
             // Identifiers, URLs and passwords: no auto-capital, no auto-correct/suggestions
             input := TextInput {
                 color: Theme.fg; input-type: root.kind; vertical-alignment: center; single-line: true;
@@ -145,7 +146,7 @@ component NavButton inherits Rectangle {
     min-height: 44px; border-radius: 10px;
     background: root.active ? Theme.acc.with-alpha(0.22) : (ta.has-hover ? Theme.card : transparent);
     Text {
-        text: root.text; color: root.active ? Theme.acc : Theme.fg; font-weight: 700; font-size: 14px;
+        text: root.text; color: root.active ? Theme.acc : Theme.fg; font-weight: 700; font-size: root.vertical ? 14px : 11px; overflow: elide;
         horizontal-alignment: root.vertical ? TextHorizontalAlignment.left : TextHorizontalAlignment.center;
         vertical-alignment: center; x: root.vertical ? 16px : 0px; width: parent.width - (root.vertical ? 16px : 0px);
     }
@@ -159,13 +160,13 @@ component EventRow inherits Rectangle {
     callback open();
     height: 92px;
     Rectangle {
-        y: 4px; height: parent.height - 8px; background: Theme.card; border-radius: 8px;
+        y: 4px; height: parent.height - 8px; background: Theme.card; border-radius: 8px; clip: true;
         TouchArea { clicked => { root.open(); } }
         HorizontalLayout {
             padding: 10px; spacing: 10px;
             if root.ev.channel != "": VerticalLayout { alignment: center; Logo { source: root.ev.logo; has-logo: root.ev.has-logo; name: root.ev.initials; } }
             VerticalLayout {
-                horizontal-stretch: 1; spacing: 2px; alignment: center;
+                horizontal-stretch: 1; spacing: 2px; alignment: center; min-width: 0px;
                 Text { text: root.ev.channel != "" ? root.ev.when + "  ·  " + root.ev.channel : root.ev.when; color: Theme.fg-dim; font-size: 12px; overflow: elide; }
                 Text { text: root.ev.title; color: Theme.fg; font-weight: 700; overflow: elide; }
                 Text { text: root.ev.summary; color: Theme.fg-dim; font-size: 12px; overflow: elide; }
@@ -191,11 +192,11 @@ component RecRow inherits Rectangle {
     callback play();
     height: 84px;
     Rectangle {
-        y: 4px; height: parent.height - 8px; background: Theme.card; border-radius: 8px;
+        y: 4px; height: parent.height - 8px; background: Theme.card; border-radius: 8px; clip: true;
         HorizontalLayout {
             padding: 10px; spacing: 10px;
             VerticalLayout {
-                horizontal-stretch: 1; spacing: 2px; alignment: center;
+                horizontal-stretch: 1; spacing: 2px; alignment: center; min-width: 0px;
                 Text { text: root.rec.title; color: Theme.fg; font-weight: 700; overflow: elide; }
                 Text { text: root.rec.channel + "  ·  " + root.rec.when; color: Theme.fg-dim; font-size: 12px; overflow: elide; }
                 Text { text: root.rec.status; color: root.rec.running ? Theme.c-bad : Theme.fg-dim; font-size: 12px; overflow: elide; }
@@ -219,7 +220,6 @@ component TSelect inherits Rectangle {
     border-width: fs.has-focus ? 2px : 0px; border-color: Theme.acc;
     Text { x: 12px; width: parent.width - 40px; text: root.model[root.current-index]; color: Theme.fg; vertical-alignment: center; overflow: elide; }
     Text { x: parent.width - 28px; text: "▾"; color: Theme.fg-dim; vertical-alignment: center; }
-    ta := TouchArea { clicked => { pop.show(); } }
     fs := FocusScope {
         key-pressed(e) => {
             if (e.text == Key.Return || e.text == " ") { pop.show(); return accept; }
@@ -228,6 +228,7 @@ component TSelect inherits Rectangle {
             reject
         }
     }
+    ta := TouchArea { clicked => { pop.show(); } }
     pop := PopupWindow {
         x: 0; y: root.height + 2px; width: root.width; height: min(root.model.length * 40px + 8px, 280px);
         close-policy: close-on-click-outside;
@@ -695,7 +696,11 @@ export component MainWindow inherits Window {
         }
     }
 
-    if root.detail-open: Rectangle {
+    if root.detail-open: FocusScope {
+        x: 0px; y: 0px; width: root.width; height: root.height;
+        init => { self.focus(); }
+        key-pressed(e) => { if (e.text == Key.Escape) { root.detail-open = false; return accept; } reject }
+        Rectangle {
         background: #00000099;
         TouchArea { clicked => { root.detail-open = false; } }
         Rectangle {
@@ -732,6 +737,7 @@ export component MainWindow inherits Window {
                 }
             }
         }
+    }
     }
 
     if root.toast != "": Rectangle {

@@ -139,7 +139,11 @@ impl Session {
     pub fn describe_url(url: &str) -> String { crate::address::redact_url(url) }
 
     /// Playback URL of a recording (`/dvrfile/<uuid>`); the server checks the account's recorder rights.
-    pub fn recording_url(&self, uuid: &str) -> String { self.api.dvr_url(uuid) }
+    /// A ticket is preferred (no password in the address); the login in the address is the fallback.
+    pub async fn recording_url(&self, uuid: &str) -> String {
+        if let Some(u) = self.api.ticket_url(&format!("/dvrfile/{uuid}")).await { return u; }
+        self.api.dvr_url(uuid)
+    }
 
     /// Preferred playback URL. As tvhclient does, ask the server for a one-time ticket over HTSP
     /// (`getTicket`) and play `<base><path>?ticket=..&profile=pass`, so no password is put in the URL.
@@ -157,6 +161,7 @@ impl Session {
                 }
             }
         }
+        if let Some(u) = self.api.ticket_url(&format!("/stream/channel/{uuid}")).await { return u; } // no HTSP: ask over HTTP
         self.stream_url(uuid)
     }
 

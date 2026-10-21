@@ -213,11 +213,11 @@ async fn http_conn(mut stream: TcpStream, webroot: String, state: Shared) {
     let user = user.or_else(|| (param("auth").as_deref() == Some(AUTH_CODE)).then(|| ("user".to_string(), false)));
     let json_ok = |v: String| ("200 OK", "application/json", v.into_bytes());
     let forbidden = || ("403 Forbidden", "text/plain", b"forbidden".to_vec());
-    let ticket_ok = path.starts_with("/stream/channelid/") && path_q.contains("ticket=TICKET123");
+    let ticket_ok = (path.starts_with("/stream/") || path.starts_with("/dvrfile/")) && path_q.contains("ticket=TICKET123");
     let (code, ctype, out): (&str, &str, Vec<u8>) = if path.is_empty() {
         ("404 Not Found", "text/plain", b"not found".to_vec())
     } else if ticket_ok {
-        ("200 OK", "video/mp2t", b"MOCK-TS-DATA".to_vec())
+        ("200 OK", "video/mp2t", if path.starts_with("/dvrfile/") { b"MOCK-DVR-DATA".to_vec() } else { b"MOCK-TS-DATA".to_vec() })
     } else if user.is_none() {
         ("401 Unauthorized", "text/plain", b"unauthorized".to_vec())
     } else {
@@ -308,6 +308,7 @@ async fn http_conn(mut stream: TcpStream, webroot: String, state: Shared) {
             "/api/status/inputs" => if is_admin {
                 json_ok("{\"entries\":[{\"uuid\":\"in1\",\"input\":\"Mock DVB-S #0\",\"stream\":\"10773H\",\"subs\":1,\"signal\":49151,\"signal_scale\":1,\"snr\":18500,\"snr_scale\":2,\"ber\":0,\"unc\":0}],\"totalCount\":1}".into())
             } else { forbidden() },
+            p if p.starts_with("/play/ticket/") => ("302 Found", Box::leak(format!("{}{}?ticket=TICKET123", webroot, &p["/play/ticket".len()..]).into_boxed_str()), Vec::new()),
             "/imagecache/1" => ("200 OK", "image/png", LOGO_PNG.to_vec()),
             p if p.starts_with("/dvrfile/") => if can_record { ("200 OK", "video/mp2t", b"MOCK-DVR-DATA".to_vec()) } else { forbidden() },
             p if p.starts_with("/stream/channel/") => ("200 OK", "video/mp2t", b"MOCK-TS-DATA".to_vec()),
@@ -318,7 +319,9 @@ async fn http_conn(mut stream: TcpStream, webroot: String, state: Shared) {
 }
 
 async fn respond(stream: &mut TcpStream, code: &str, ctype: &str, body: Vec<u8>) {
-    let head = format!("HTTP/1.1 {code}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+    // For redirects the "content type" slot carries the target address.
+    let extra = if code.starts_with("302") { format!("Location: {ctype}\r\n") } else { String::new() };
+    let head = format!("HTTP/1.1 {code}\r\nContent-Type: {ctype}\r\n{extra}Content-Length: {}\r\nConnection: close\r\n\r\n", body.len());
     let _ = stream.write_all(head.as_bytes()).await;
     let _ = stream.write_all(&body).await;
 }

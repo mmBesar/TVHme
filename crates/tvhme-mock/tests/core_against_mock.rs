@@ -113,7 +113,9 @@ async fn playback_url_falls_back_to_credentials_without_htsp() {
     let m = tvhme_mock::spawn_with("", false).await;
     let s = Session::connect(opts(addr(&m), "user", "user", Some(m.htsp.port()))).await.unwrap();
     let url = s.playback_url("uuid-one").await;
-    assert!(url.starts_with("http://user:user@127.0.0.1:") && url.contains("/stream/channel/uuid-one"), "{url}");
+    // no HTSP: a ticket over HTTP, as the web interface does
+    assert!(url.contains("/stream/channel/uuid-one?ticket=TICKET123&profile=pass") && !url.contains('@'), "{url}");
+    assert!(s.stream_url("uuid-one").starts_with("http://user:user@127.0.0.1:")); // the login-in-address fallback
 }
 
 #[tokio::test]
@@ -196,11 +198,14 @@ async fn account_without_recorder_rights_can_watch_and_search_but_the_server_ref
 async fn recording_file_plays_for_recorders_and_is_refused_for_others() {
     let m = tvhme_mock::spawn().await;
     let ok = Session::connect(opts(addr(&m), "user", "user", None)).await.unwrap();
-    let r = reqwest::Client::new().get(ok.recording_url("rec-1")).send().await.unwrap();
+    let url = ok.recording_url("rec-1").await;
+    assert!(url.contains("/dvrfile/rec-1?ticket=TICKET123") && !url.contains('@'), "{url}"); // ticket, no password
+    let r = reqwest::Client::new().get(url).send().await.unwrap(); // no login at all
     assert_eq!(r.status().as_u16(), 200);
     assert_eq!(&r.bytes().await.unwrap()[..], b"MOCK-DVR-DATA");
+    // viewer: the server still hands out a ticket in the mock, but tickets are only a way to carry the login
     let no = Session::connect(opts(addr(&m), "viewer", "viewer", None)).await.unwrap();
-    let r = reqwest::Client::new().get(no.recording_url("rec-1")).send().await.unwrap();
+    let r = reqwest::Client::new().get(no.api.dvr_url("rec-1")).send().await.unwrap();
     assert_eq!(r.status().as_u16(), 403);
 }
 

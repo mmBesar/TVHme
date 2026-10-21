@@ -212,9 +212,10 @@ fn load_timeline(w: slint::Weak<MainWindow>, session: Shared, tag: String) {
             ui_do(&w, move |ui| {
                 TL_T0.with(|c| c.set(t0));
                 let off = fmt::local_offset();
+                let old: Vec<TlRow> = ui.get_tl_rows().iter().collect(); // keep what is shown until the new data arrives
                 let rows: Vec<TlRow> = chans.iter().filter_map(|u| s.channels.iter().find(|c| c.uuid == *u)).map(|c| {
                     let (logo, has_logo) = logo_for(&c.uuid);
-                    TlRow { uuid: c.uuid.clone().into(), name: c.name.clone().into(), initials: initials(&c.name).into(), logo, has_logo, events: ModelRc::default() }
+                    TlRow { uuid: c.uuid.clone().into(), name: c.name.clone().into(), initials: initials(&c.name).into(), logo, has_logo, events: old.iter().find(|r| r.uuid == c.uuid.as_str()).map(|r| r.events.clone()).unwrap_or_default() }
                 }).collect();
                 let ticks: Vec<Tick> = (0..=(WINDOW_MIN / 30)).map(|i| {
                     let ts = t0 + i * 1800;
@@ -312,7 +313,7 @@ fn start_playback(w: slint::Weak<MainWindow>, session: Shared, slot: Slot, targe
             let t = title.clone();
             ui_do(&w, move |ui| { ui.set_now_playing(t.into()); ui.set_play_note("".into()); ui.set_has_signal(false); });
         }
-        let url = match &target { Target::Channel(u) => s.playback_url(u).await, Target::Recording(u) => s.recording_url(u) };
+        let url = match &target { Target::Channel(u) => s.playback_url(u).await, Target::Recording(u) => s.recording_url(u).await };
         let (kill_tx, kill_rx) = tokio::sync::oneshot::channel::<()>();
         #[cfg(target_os = "android")]
         { let d = format!("Sent to the player: {}", Session::describe_url(&url)); ui_do(&w, move |ui| ui.set_play_note(d.into())); }
@@ -800,7 +801,25 @@ pub fn run() -> Result<(), slint::PlatformError> {
             }
         }
     }
-    ui.run()
+    // Keep the guide alive: move the "now" line every 30 s and re-read the programmes every 3 minutes.
+    let ticker = slint::Timer::default();
+    ticker.start(slint::TimerMode::Repeated, std::time::Duration::from_secs(30), {
+        let (w, session) = (ui.as_weak(), session.clone());
+        let mut count = 0u32;
+        move || {
+            count += 1;
+            let Some(ui) = w.upgrade() else { return };
+            if ui.get_screen() != 1 { return; }
+            let t0 = TL_T0.with(|c| c.get());
+            if t0 > 0 { ui.set_tl_now_x(((fmt::now_ts() - t0) as f32 / 60.0) * PX_PER_MIN); }
+            if count % 6 == 0 && ui.get_tl_rows().row_count() > 0 {
+                load_timeline(w.clone(), session.clone(), selected_tag(&ui.get_guide_tags()));
+            }
+        }
+    });
+    let result = ui.run();
+    drop(ticker);
+    result
 }
 
 #[cfg(target_os = "android")]
