@@ -4,13 +4,64 @@ mod config;
 mod fmt;
 mod player;
 
-use slint::{Color, Model, ModelRc, VecModel};
+use slint::{Color, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, VecModel};
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use tvhme_core::api::{Event, RecordingKind};
 use tvhme_core::session::{ConnectOptions, Session, SignalSource, SignalWatch};
 use tvhme_core::signal::SignalStatus;
 use tvhme_core::theme::{Accent, Flavor, ThemeChoice};
+
+thread_local! {
+    /// Channel logos by channel uuid. Slint images belong to the UI thread, hence thread-local.
+    static LOGOS: RefCell<HashMap<String, Image>> = RefCell::new(HashMap::new());
+}
+
+/// "BBC One" -> "BO", "Mock Two" -> "MT", "Nile" -> "NI": shown when a channel has no logo.
+fn initials(name: &str) -> String {
+    let words: Vec<char> = name.split_whitespace().filter_map(|w| w.chars().next()).collect();
+    let s: String = if words.len() >= 2 { words.iter().take(2).collect() } else { name.chars().take(2).collect() };
+    s.to_uppercase()
+}
+
+fn logo_for(uuid: &str) -> (Image, bool) {
+    LOGOS.with(|l| match l.borrow().get(uuid) { Some(i) => (i.clone(), true), None => (Image::default(), false) })
+}
+
+/// Decode a downloaded picture off the UI thread; the pixels are sent over, the Image is made on the UI thread.
+fn decode_rgba(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    let img = image::load_from_memory(bytes).ok()?;
+    let img = if img.width() > 256 || img.height() > 256 { img.thumbnail(256, 256) } else { img };
+    let rgba = img.to_rgba8();
+    Some((rgba.width(), rgba.height(), rgba.into_raw()))
+}
+
+/// Fetch every channel logo in the background (a few at a time) and put each on screen as it arrives.
+fn load_logos(w: slint::Weak<MainWindow>, s: Arc<Session>) {
+    rt().spawn(async move {
+        let gate = Arc::new(tokio::sync::Semaphore::new(6));
+        for c in s.channels.iter().filter(|c| c.icon.is_some()) {
+            let (uuid, src, s, w, gate) = (c.uuid.clone(), c.icon.clone().unwrap_or_default(), s.clone(), w.clone(), gate.clone());
+            tokio::spawn(async move {
+                let Ok(_p) = gate.acquire().await else { return };
+                let Ok(bytes) = s.api.image(&src).await else { return };
+                let Some((wd, ht, px)) = tokio::task::spawn_blocking(move || decode_rgba(&bytes)).await.ok().flatten() else { return };
+                ui_do(&w, move |ui| {
+                    let img = Image::from_rgba8(SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(&px, wd, ht));
+                    LOGOS.with(|l| l.borrow_mut().insert(uuid.clone(), img.clone()));
+                    let m = ui.get_channels();
+                    for i in 0..m.row_count() {
+                        if let Some(mut row) = m.row_data(i) {
+                            if row.uuid == uuid.as_str() { row.logo = img.clone(); row.has_logo = true; m.set_row_data(i, row); }
+                        }
+                    }
+                });
+            });
+        }
+    });
+}
 
 fn rt() -> &'static tokio::runtime::Runtime {
     static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
@@ -81,6 +132,7 @@ fn event_items(evs: &[Event]) -> Vec<EventItem> {
         summary: e.summary.clone().into(),
         state: e.dvr_state.clone().unwrap_or_default().into(),
         dvr_uuid: e.dvr_uuid.clone().unwrap_or_default().into(),
+        logo: logo_for(&e.channel_uuid).0, has_logo: logo_for(&e.channel_uuid).1, initials: initials(&e.channel_name).into(),
     }).collect()
 }
 
@@ -88,6 +140,7 @@ fn channel_items(s: &Session, tag: &str) -> Vec<ChannelItem> {
     s.channels.iter().filter(|c| tag.is_empty() || c.tags.iter().any(|t| t == tag)).map(|c| ChannelItem {
         uuid: c.uuid.clone().into(), number: c.number as i32, name: c.name.clone().into(),
         now: c.now.as_ref().map(|n| n.title.clone()).unwrap_or_default().into(),
+        logo: logo_for(&c.uuid).0, has_logo: logo_for(&c.uuid).1, initials: initials(&c.name).into(),
     }).collect()
 }
 
@@ -255,7 +308,6 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 match res {
                     Ok(s) => {
                         let s = Arc::new(s);
-                        let items = channel_items(&s, "");
                         let names: Vec<slint::SharedString> = s.channels.iter().map(|c| c.name.clone().into()).collect();
                         let tags: Vec<TagItem> = s.api.tags().await.unwrap_or_default().into_iter()
                             .map(|t| TagItem { uuid: t.uuid.into(), name: t.name.into(), selected: false }).collect();
@@ -267,9 +319,13 @@ pub fn run() -> Result<(), slint::PlatformError> {
                             c.user = opts.user.clone(); c.pass = opts.pass.clone(); c.insecure = opts.insecure_tls;
                             c.auth_code = opts.auth_code.clone(); c.auto_login = true;
                         });
+                        let s2 = s.clone();
                         *session.lock().await = Some(s);
                         let _ = slint::invoke_from_event_loop(move || {
                             let Some(ui) = w.upgrade() else { return };
+                            LOGOS.with(|l| l.borrow_mut().clear());
+                            let items = channel_items(&s2, "");
+                            load_logos(w.clone(), s2);
                             ui.set_busy(false);
                             ui.set_channels(ModelRc::new(VecModel::from(items)));
                             ui.set_channel_names(ModelRc::new(VecModel::from(names)));
@@ -565,6 +621,12 @@ fn android_main(app: slint::android::AndroidApp) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn initials_for_logoless_channels() {
+        assert_eq!(initials("BBC One"), "BO");
+        assert_eq!(initials("nile"), "NI");
+        assert_eq!(initials(""), "");
+    }
     #[test]
     fn theme_indices_map_correctly() {
         assert_eq!(choice_from_indices(2, 3, 0), ThemeChoice::default());

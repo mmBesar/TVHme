@@ -301,6 +301,26 @@ impl Api {
         match r.status().as_u16() { 200 => Ok(()), c => Err(ApiError::Status(c)) }
     }
 
+    /// Download a channel logo / event picture. `src` is what the server gave us: usually a relative
+    /// `imagecache/<id>` path (fetched with the account's login), or a full http(s) URL (the login is only
+    /// sent when it points at the Tvheadend server itself). Capped at 4 MB.
+    pub async fn image(&self, src: &str) -> Result<Vec<u8>, ApiError> {
+        let url = if src.starts_with("http://") || src.starts_with("https://") { src.to_string() }
+            else if src.contains("imagecache/") { self.addr.url(&format!("/{}", src.trim_start_matches('/'))) }
+            else { return Err(ApiError::BadResponse("unsupported image source".into())) };
+        let mut req = self.http.get(&url);
+        if url.starts_with(&self.addr.base_url()) {
+            if !self.user.is_empty() { req = req.basic_auth(&self.user, Some(&self.pass)); }
+            else if self.has_auth_code() { req = req.query(&[("auth", self.auth.as_str())]); }
+        }
+        let r = req.send().await.map_err(|e| classify(e, &self.addr))?;
+        if r.status().as_u16() != 200 { return Err(ApiError::Status(r.status().as_u16())); }
+        if r.content_length().is_some_and(|n| n > 4_000_000) { return Err(ApiError::BadResponse("image too large".into())); }
+        let b = r.bytes().await.map_err(|e| ApiError::BadResponse(e.to_string()))?;
+        if b.len() > 4_000_000 { return Err(ApiError::BadResponse("image too large".into())); }
+        Ok(b.to_vec())
+    }
+
     /// Channels this account may see (the server filters them), sorted by number then name.
     pub async fn channels(&self) -> Result<Vec<Channel>, ApiError> {
         let g: Grid<RawChannel> = self.json("/api/channel/grid?start=0&limit=10000").await?;

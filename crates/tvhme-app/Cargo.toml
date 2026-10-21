@@ -17,6 +17,7 @@ tokio = { workspace = true, features = ["process", "sync", "macros", "time", "rt
 slint = "1.18"
 serde = { workspace = true }
 serde_json = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
@@ -31,6 +32,10 @@ slint-build = "1.18"
 package = "io.github.mmbesar.tvhme"
 build_targets = ["aarch64-linux-android", "armv7-linux-androideabi", "x86_64-linux-android"]
 apk_name = "TVHme"
+
+[package.metadata.android.application]
+# Home servers are often plain http on the LAN; Android blocks that unless the app says it may.
+uses_cleartext_traffic = true
 
 [package.metadata.android.sdk]
 min_sdk_version = 26

@@ -17,6 +17,8 @@ pub const CHALLENGE: [u8; 32] = [7u8; 32];
 pub const USERS: [(&str, &str, bool); 3] = [("admin", "admin", true), ("user", "user", false), ("viewer", "viewer", false)];
 /// "viewer" may watch but has no recorder permission (DVR calls answer 403), like a restricted Tvheadend account.
 const NO_RECORDER: &str = "viewer";
+/// A small PNG the mock serves as a channel logo (`/imagecache/1`).
+pub const LOGO_PNG: &[u8] = &[137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 24, 0, 0, 0, 24, 8, 2, 0, 0, 0, 111, 21, 170, 175, 0, 0, 0, 31, 73, 68, 65, 84, 120, 156, 99, 248, 218, 37, 79, 21, 196, 48, 106, 208, 168, 65, 163, 6, 141, 26, 52, 106, 208, 168, 65, 3, 111, 16, 0, 29, 66, 163, 174, 197, 74, 229, 30, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130];
 /// Persistent authentication code the mock accepts for the account "user".
 pub const AUTH_CODE: &str = "MOCKCODE";
 pub const CHANNELS: [(&str, u32, &str); 3] = [("uuid-one", 1, "Mock One"), ("uuid-two", 2, "Mock Two"), ("uuid-three", 3, "Mock Three")];
@@ -235,7 +237,7 @@ async fn http_conn(mut stream: TcpStream, webroot: String, state: Shared) {
             "/api/config/load" => if is_admin { json_ok("{\"entries\":[]}".into()) } else { forbidden() },
             "/api/channel/grid" => {
                 let tags = |u: &str| match u { "uuid-one" => "[\"tag-news\"]", "uuid-two" => "[\"tag-news\",\"tag-movies\"]", _ => "[\"tag-movies\"]" };
-                let e: Vec<String> = CHANNELS.iter().map(|(u, num, name)| format!("{{\"uuid\":\"{u}\",\"enabled\":true,\"name\":\"{name}\",\"number\":{num},\"tags\":{}}}", tags(u))).collect();
+                let e: Vec<String> = CHANNELS.iter().map(|(u, num, name)| format!("{{\"uuid\":\"{u}\",\"enabled\":true,\"name\":\"{name}\",\"number\":{num}{},\"tags\":{}}}", if *u == "uuid-two" { ",\"icon_public_url\":\"imagecache/1\"" } else { "" }, tags(u))).collect();
                 json_ok(format!("{{\"entries\":[{}],\"total\":{}}}", e.join(","), CHANNELS.len()))
             }
             "/api/channeltag/grid" => json_ok("{\"entries\":[{\"uuid\":\"tag-movies\",\"name\":\"Movies\",\"enabled\":true,\"index\":2},{\"uuid\":\"tag-news\",\"name\":\"News\",\"enabled\":true,\"index\":1}],\"total\":2}".into()),
@@ -306,6 +308,7 @@ async fn http_conn(mut stream: TcpStream, webroot: String, state: Shared) {
             "/api/status/inputs" => if is_admin {
                 json_ok("{\"entries\":[{\"uuid\":\"in1\",\"input\":\"Mock DVB-S #0\",\"stream\":\"10773H\",\"subs\":1,\"signal\":49151,\"signal_scale\":1,\"snr\":18500,\"snr_scale\":2,\"ber\":0,\"unc\":0}],\"totalCount\":1}".into())
             } else { forbidden() },
+            "/imagecache/1" => ("200 OK", "image/png", LOGO_PNG.to_vec()),
             p if p.starts_with("/dvrfile/") => if can_record { ("200 OK", "video/mp2t", b"MOCK-DVR-DATA".to_vec()) } else { forbidden() },
             p if p.starts_with("/stream/channel/") => ("200 OK", "video/mp2t", b"MOCK-TS-DATA".to_vec()),
             _ => ("404 Not Found", "text/plain", b"not found".to_vec()),

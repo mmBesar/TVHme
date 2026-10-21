@@ -219,3 +219,17 @@ async fn authentication_code_replaces_the_password_for_streams_and_the_api() {
     bad.auth_code = "WRONG".into();
     assert!(Session::connect(bad).await.is_err());
 }
+
+#[tokio::test]
+async fn channel_logos_are_listed_and_downloadable_with_the_account_login() {
+    let m = tvhme_mock::spawn().await;
+    let s = Session::connect(opts(addr(&m), "user", "user", None)).await.unwrap();
+    let with: Vec<_> = s.channels.iter().filter(|c| c.icon.is_some()).collect();
+    assert_eq!(with.len(), 1);
+    assert_eq!(with[0].uuid, "uuid-two");
+    let png = s.api.image(with[0].icon.as_ref().unwrap()).await.unwrap();
+    assert_eq!(png, tvhme_mock::LOGO_PNG);
+    assert!(s.api.image("file:///etc/passwd").await.is_err());
+    let bad = Session::connect(opts(addr(&m), "user", "user", None)).await.unwrap();
+    assert!(bad.api.image("imagecache/999").await.is_err());
+}
