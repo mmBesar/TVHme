@@ -19,6 +19,9 @@ pub struct Saved {
     pub auth_code: String,
     /// Go straight into the app at startup (cleared by "Sign out").
     pub auto_login: bool,
+    /// Last channel group opened in Live and in the Guide (tag uuid; empty = all channels).
+    pub last_tag: String,
+    pub last_guide_tag: String,
     pub mode: i32,
     pub flavor: i32,
     pub accent: i32,
@@ -29,7 +32,7 @@ impl Default for Saved {
     fn default() -> Self {
         // Catppuccin Macchiato + Mauve, HTSP on Tvheadend's usual port
         Saved { address: String::new(), htsp_port: "9982".into(), user: String::new(), pass: String::new(),
-                insecure: false, auth_code: String::new(), auto_login: false, mode: 0, flavor: 2, accent: 3, player: 0 }
+                insecure: false, auth_code: String::new(), auto_login: false, last_tag: String::new(), last_guide_tag: String::new(), mode: 0, flavor: 2, accent: 3, player: 0 }
     }
 }
 

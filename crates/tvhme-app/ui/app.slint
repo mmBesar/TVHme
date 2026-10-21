@@ -4,7 +4,10 @@ export struct InfoRow { title: string, detail: string }
 export struct ChannelItem { uuid: string, number: int, name: string, now: string, logo: image, has-logo: bool, initials: string }
 export struct NavItem { id: int, label: string }
 export struct TagItem { uuid: string, name: string, selected: bool }
-export struct EventItem { id: int, channel: string, title: string, when: string, summary: string, state: string, dvr-uuid: string, logo: image, has-logo: bool, initials: string }
+export struct EventItem { id: int, channel: string, title: string, when: string, summary: string, state: string, dvr-uuid: string, logo: image, has-logo: bool, initials: string, description: string, channel-uuid: string, poster: image, has-poster: bool }
+export struct TlEvent { id: int, title: string, x: length, w: length, live: bool, rec: bool }
+export struct TlRow { uuid: string, name: string, initials: string, logo: image, has-logo: bool, events: [TlEvent] }
+export struct Tick { x: length, label: string }
 export struct RecItem { uuid: string, title: string, channel: string, when: string, status: string, running: bool }
 
 export global Theme {
@@ -153,9 +156,11 @@ component EventRow inherits Rectangle {
     in property <EventItem> ev;
     callback record();
     callback cancel();
+    callback open();
     height: 92px;
     Rectangle {
         y: 4px; height: parent.height - 8px; background: Theme.card; border-radius: 8px;
+        TouchArea { clicked => { root.open(); } }
         HorizontalLayout {
             padding: 10px; spacing: 10px;
             if root.ev.channel != "": VerticalLayout { alignment: center; Logo { source: root.ev.logo; has-logo: root.ev.has-logo; name: root.ev.initials; } }
@@ -296,6 +301,15 @@ export component MainWindow inherits Window {
     in-out property <string> toast;
     in property <[ChannelItem]> channels;
     in property <[TagItem]> tags;
+    in property <[TagItem]> guide-tags;
+    in-out property <int> guide-mode: 0;
+    in property <[TlRow]> tl-rows;
+    in property <[Tick]> tl-ticks;
+    in property <length> tl-width: 0px;
+    in property <length> tl-now-x: 0px;
+    in property <bool> tl-busy: false;
+    in-out property <bool> detail-open: false;
+    in property <EventItem> detail;
     in property <[string]> channel-names;
     in-out property <int> guide-index: 0;
     in property <[EventItem]> guide-events;
@@ -337,6 +351,11 @@ export component MainWindow inherits Window {
     callback connect(string, string, string, string, bool, string);
     callback tab-changed(int);
     callback select-tag(string);
+    callback select-guide-tag(string);
+    callback guide-mode-changed(int);
+    callback event-clicked(int);
+    callback detail-record(int, string);
+    callback detail-cancel(string, string);
     callback play(string);
     callback record-now(string, string);
     callback stop-playback();
@@ -486,23 +505,118 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                // ---- Guide
+                // ---- Guide: timeline / one channel / search
                 if root.tab == 1: VerticalLayout {
                     Header { title: "Guide"; }
-                    VerticalLayout {
-                        padding: 12px; spacing: 8px; height: 66px;
-                        TSelect {
-                            height: 42px;
-                            model: root.channel-names; current-index <=> root.guide-index;
-                            selected(i) => { root.load-guide(i); }
+                    HorizontalLayout {
+                        padding: 10px; padding-bottom: 4px; spacing: 8px; height: 52px; alignment: start;
+                        Chip { text: "Timeline"; active: root.guide-mode == 0; clicked => { root.guide-mode = 0; root.guide-mode-changed(0); } }
+                        Chip { text: "Channel"; active: root.guide-mode == 1; clicked => { root.guide-mode = 1; root.guide-mode-changed(1); } }
+                        Chip { text: "Search"; active: root.guide-mode == 2; clicked => { root.guide-mode = 2; root.guide-mode-changed(2); } }
+                    }
+
+                    // --- timeline
+                    if root.guide-mode == 0: VerticalLayout {
+                        TouchArea {
+                            height: 46px;
+                            scroll-event(e) => {
+                                if (gchips-flick.content-width <= gchips-flick.width) { return reject; }
+                                gchips-flick.content-x = max(gchips-flick.width - gchips-flick.content-width, min(0px, gchips-flick.content-x + e.delta-y + e.delta-x));
+                                accept
+                            }
+                            gchips-flick := Flickable {
+                                content-width: gchips.preferred-width + 24px;
+                                gchips := HorizontalLayout {
+                                    x: 12px; y: 6px; spacing: 8px; height: 34px;
+                                    Chip { text: "Now"; active: false; clicked => { tl.content-x = 0px; } }
+                                    for t in root.guide-tags: Chip { text: t.name; active: t.selected; clicked => { root.select-guide-tag(t.uuid); } }
+                                }
+                            }
+                        }
+                        Rectangle {
+                            vertical-stretch: 1; clip: true;
+                            property <length> chan-w: root.wide ? 150px : 64px;
+                            Rectangle {
+                                x: parent.chan-w; y: 0px; height: 28px; width: parent.width - parent.chan-w; clip: true;
+                                Rectangle {
+                                    x: tl.content-x; y: 0px; height: 28px; width: root.tl-width;
+                                    for tk in root.tl-ticks: Text { x: tk.x + 4px; text: tk.label; color: Theme.fg-dim; font-size: 12px; vertical-alignment: center; height: 28px; }
+                                    for tk in root.tl-ticks: Rectangle { x: tk.x; width: 1px; height: 28px; background: Theme.card-hi; }
+                                }
+                            }
+                            Rectangle {
+                                x: 0px; y: 28px; width: parent.chan-w; height: parent.height - 28px; clip: true;
+                                Rectangle {
+                                    x: 0px; y: tl.content-y; height: root.tl-rows.length * 56px; width: parent.width;
+                                    for r[i] in root.tl-rows: Rectangle {
+                                        x: 0px; y: i * 56px; height: 56px; width: parent.width; background: Theme.bar;
+                                        HorizontalLayout {
+                                            padding: 4px; spacing: 6px;
+                                            VerticalLayout { alignment: center; Logo { source: r.logo; has-logo: r.has-logo; name: r.initials; width: root.wide ? 48px : 54px; height: 36px; } }
+                                            if root.wide: Text { text: r.name; color: Theme.fg; font-size: 12px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                                        }
+                                    }
+                                }
+                            }
+                            tl := Flickable {
+                                x: parent.chan-w; y: 28px; width: parent.width - parent.chan-w; height: parent.height - 28px;
+                                content-width: root.tl-width; content-height: root.tl-rows.length * 56px;
+                                for r[i] in root.tl-rows: Rectangle {
+                                    x: 0px; y: i * 56px; height: 56px; width: root.tl-width;
+                                    for ev in r.events: Rectangle {
+                                        x: ev.x; y: 3px; width: ev.w; height: 50px; border-radius: 6px; clip: true;
+                                        background: ev-ta.has-hover ? Theme.card-hi : (ev.live ? Theme.card-hi.with-alpha(0.7) : Theme.card);
+                                        border-width: ev.rec ? 2px : (ev.live ? 1px : 0px); border-color: ev.rec ? Theme.c-bad : Theme.acc;
+                                        Text { x: 6px; width: parent.width - 10px; text: ev.title; color: Theme.fg; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                                        ev-ta := TouchArea { clicked => { root.event-clicked(ev.id); } }
+                                    }
+                                }
+                                Rectangle { x: root.tl-now-x; y: 0; width: 2px; height: max(tl.height, root.tl-rows.length * 56px); background: Theme.c-bad; }
+                            }
+                            if root.tl-rows.length == 0: Text { y: 80px; width: parent.width; text: root.tl-busy ? "Loading…" : "No channels"; color: Theme.fg-dim; horizontal-alignment: center; }
                         }
                     }
-                    if root.guide-events.length == 0: Text { text: root.guide-busy ? "Loading…" : "No guide data for this channel"; color: Theme.fg-dim; horizontal-alignment: center; }
-                    ListView {
-                        for ev in root.guide-events: EventRow {
-                            ev: ev;
-                            record => { root.record-event(ev.id); }
-                            cancel => { root.cancel-recording(ev.dvr-uuid); }
+
+                    // --- one channel
+                    if root.guide-mode == 1: VerticalLayout {
+                        VerticalLayout {
+                            padding: 12px; spacing: 8px; height: 66px;
+                            TSelect {
+                                height: 42px;
+                                model: root.channel-names; current-index <=> root.guide-index;
+                                selected(i) => { root.load-guide(i); }
+                            }
+                        }
+                        if root.guide-events.length == 0: Text { text: root.guide-busy ? "Loading…" : "No guide data for this channel"; color: Theme.fg-dim; horizontal-alignment: center; }
+                        ListView {
+                            for ev in root.guide-events: EventRow {
+                                ev: ev;
+                                open => { root.event-clicked(ev.id); }
+                                record => { root.record-event(ev.id); }
+                                cancel => { root.cancel-recording(ev.dvr-uuid); }
+                            }
+                        }
+                    }
+
+                    // --- search
+                    if root.guide-mode == 2: VerticalLayout {
+                        VerticalLayout {
+                            padding: 12px; spacing: 8px; height: 104px;
+                            HorizontalLayout {
+                                spacing: 8px; height: 42px;
+                                TField { placeholder: "Search titles and descriptions"; text <=> root.search-text; accepted => { root.do-search(root.search-text, root.search-full); } }
+                                TButton { text: "Search"; primary: true; width: 90px; clicked => { root.do-search(root.search-text, root.search-full); } }
+                            }
+                            CheckBox { text: "Also search descriptions"; checked <=> root.search-full; }
+                        }
+                        if root.search-note != "": Text { text: root.search-note; color: Theme.fg-dim; horizontal-alignment: center; }
+                        ListView {
+                            for ev in root.search-events: EventRow {
+                                ev: ev;
+                                open => { root.event-clicked(ev.id); }
+                                record => { root.record-event(ev.id); }
+                                cancel => { root.cancel-recording(ev.dvr-uuid); }
+                            }
                         }
                     }
                 }
@@ -524,28 +638,6 @@ export component MainWindow inherits Window {
                             stop => { root.stop-recording(r.uuid); }
                             cancel => { root.cancel-recording(r.uuid); }
                             remove => { root.remove-recording(r.uuid); }
-                        }
-                    }
-                }
-
-                // ---- Search
-                if root.tab == 3: VerticalLayout {
-                    Header { title: "Search the guide"; }
-                    VerticalLayout {
-                        padding: 12px; spacing: 8px; height: 104px;
-                        HorizontalLayout {
-                            spacing: 8px; height: 42px;
-                            TField { placeholder: "Title or text"; text <=> root.search-text; accepted => { root.do-search(root.search-text, root.search-full); } }
-                            TButton { text: "Search"; primary: true; width: 90px; clicked => { root.do-search(root.search-text, root.search-full); } }
-                        }
-                        CheckBox { text: "Also search descriptions"; checked <=> root.search-full; }
-                    }
-                    if root.search-note != "": Text { text: root.search-note; color: Theme.fg-dim; horizontal-alignment: center; }
-                    ListView {
-                        for ev in root.search-events: EventRow {
-                            ev: ev;
-                            record => { root.record-event(ev.id); }
-                            cancel => { root.cancel-recording(ev.dvr-uuid); }
                         }
                     }
                 }
@@ -597,6 +689,45 @@ export component MainWindow inherits Window {
                                 apply(f, a, m) => { root.apply-theme(f, a, m); }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.detail-open: Rectangle {
+        background: #00000099;
+        TouchArea { clicked => { root.detail-open = false; } }
+        Rectangle {
+            x: (parent.width - self.width) / 2; y: root.wide ? (parent.height - self.height) / 2 : parent.height - self.height - 8px;
+            width: min(parent.width - 16px, 600px); height: min(parent.height - 24px, sheet.preferred-height + 32px);
+            background: Theme.bg; border-radius: 14px; border-width: 1px; border-color: Theme.card-hi; clip: true;
+            TouchArea { }
+            ScrollView {
+                sheet := VerticalLayout {
+                    padding: 16px; spacing: 10px; alignment: start;
+                    if root.detail.has-poster: Image { source: root.detail.poster; image-fit: contain; height: 180px; }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Logo { source: root.detail.logo; has-logo: root.detail.has-logo; name: root.detail.initials; }
+                        VerticalLayout {
+                            horizontal-stretch: 1; alignment: center;
+                            Text { text: root.detail.channel; color: Theme.fg-dim; font-size: 13px; overflow: elide; }
+                            Text { text: root.detail.when; color: Theme.fg-dim; font-size: 13px; }
+                        }
+                    }
+                    Text { text: root.detail.title; color: Theme.fg; font-size: 22px; font-weight: 700; wrap: word-wrap; }
+                    if root.detail.summary != "": Text { text: root.detail.summary; color: Theme.fg; font-size: 15px; font-weight: 600; wrap: word-wrap; }
+                    if root.detail.description != "" && root.detail.description != root.detail.summary: Text { text: root.detail.description; color: Theme.fg-dim; font-size: 14px; wrap: word-wrap; }
+                    if root.detail.state != "": Text { text: "● " + root.detail.state; color: Theme.c-bad; }
+                    HorizontalLayout {
+                        spacing: 8px; height: 44px;
+                        TButton { text: "▶ Watch channel"; primary: true; clicked => { root.detail-open = false; root.play(root.detail.channel-uuid); } }
+                        TButton {
+                            text: root.detail.dvr-uuid != "" ? "Cancel rec" : "Record";
+                            clicked => { if root.detail.dvr-uuid != "" { root.detail-cancel(root.detail.dvr-uuid, root.detail.channel-uuid); } else { root.detail-record(root.detail.id, root.detail.channel-uuid); } }
+                        }
+                        TButton { text: "Close"; clicked => { root.detail-open = false; } }
                     }
                 }
             }

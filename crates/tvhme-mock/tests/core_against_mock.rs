@@ -233,3 +233,15 @@ async fn channel_logos_are_listed_and_downloadable_with_the_account_login() {
     let bad = Session::connect(opts(addr(&m), "user", "user", None)).await.unwrap();
     assert!(bad.api.image("imagecache/999").await.is_err());
 }
+
+#[tokio::test]
+async fn events_carry_description_and_picture() {
+    let m = tvhme_mock::spawn().await;
+    let s = Session::connect(opts(addr(&m), "user", "user", None)).await.unwrap();
+    let ev = s.api.epg_channel("uuid-two", 10).await.unwrap();
+    let news = ev.iter().find(|e| e.title == "Evening News").unwrap();
+    assert_eq!(news.description, "Longer text about Evening News");
+    assert_eq!(news.image.as_deref(), Some("imagecache/1"));
+    assert!(ev.iter().find(|e| e.title == "Late Movie").unwrap().image.is_none());
+    assert_eq!(s.api.image(news.image.as_ref().unwrap()).await.unwrap(), tvhme_mock::LOGO_PNG);
+}

@@ -7,7 +7,8 @@ mod player;
 use slint::{Color, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, VecModel};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::cell::Cell;
 use std::sync::{Arc, OnceLock};
 use tvhme_core::api::{Event, RecordingKind};
 use tvhme_core::session::{ConnectOptions, Session, SignalSource, SignalWatch};
@@ -24,6 +25,17 @@ fn initials(name: &str) -> String {
     let words: Vec<char> = name.split_whitespace().filter_map(|w| w.chars().next()).collect();
     let s: String = if words.len() >= 2 { words.iter().take(2).collect() } else { name.chars().take(2).collect() };
     s.to_uppercase()
+}
+
+thread_local! {
+    /// Events seen recently, by id, so a tap on any list or timeline cell can open its details.
+    static EVENTS: RefCell<HashMap<i32, Event>> = RefCell::new(HashMap::new());
+    /// Start time of the timeline currently on screen.
+    static TL_T0: Cell<i64> = const { Cell::new(0) };
+}
+
+fn register(evs: &[Event]) {
+    EVENTS.with(|m| { let mut m = m.borrow_mut(); if m.len() > 20_000 { m.clear(); } for e in evs { m.insert(e.id as i32, e.clone()); } });
 }
 
 fn logo_for(uuid: &str) -> (Image, bool) {
@@ -123,6 +135,7 @@ fn ui_do(w: &slint::Weak<MainWindow>, f: impl FnOnce(&MainWindow) + Send + 'stat
 }
 
 fn event_items(evs: &[Event]) -> Vec<EventItem> {
+    register(evs);
     let (now, off) = (fmt::now_ts(), fmt::local_offset());
     evs.iter().map(|e| EventItem {
         id: e.id as i32,
@@ -133,6 +146,8 @@ fn event_items(evs: &[Event]) -> Vec<EventItem> {
         state: e.dvr_state.clone().unwrap_or_default().into(),
         dvr_uuid: e.dvr_uuid.clone().unwrap_or_default().into(),
         logo: logo_for(&e.channel_uuid).0, has_logo: logo_for(&e.channel_uuid).1, initials: initials(&e.channel_name).into(),
+        description: e.description.clone().into(), channel_uuid: e.channel_uuid.clone().into(),
+        poster: Image::default(), has_poster: false,
     }).collect()
 }
 
@@ -145,10 +160,108 @@ fn channel_items(s: &Session, tag: &str) -> Vec<ChannelItem> {
 }
 
 fn nav_items(admin: bool) -> Vec<NavItem> {
-    let mut v = vec![(0, "Live"), (1, "Guide"), (2, "Recordings"), (3, "Search")];
+    let mut v = vec![(0, "Live"), (1, "Guide"), (2, "Recordings")];
     if admin { v.push((4, "Server")); }
     v.push((5, "Settings"));
     v.into_iter().map(|(id, l)| NavItem { id, label: l.into() }).collect()
+}
+
+
+// ---- Guide timeline -------------------------------------------------------------------------
+const PX_PER_MIN: f32 = 3.0;      // 1 hour = 180 px
+const WINDOW_MIN: i64 = 12 * 60;  // how far ahead the timeline reaches
+static TL_GEN: AtomicU64 = AtomicU64::new(1);
+
+fn tl_events(evs: &[Event], t0: i64, now: i64) -> Vec<TlEvent> {
+    let end_w = t0 + WINDOW_MIN * 60;
+    evs.iter().filter(|e| e.stop > t0 && e.start < end_w).map(|e| {
+        let (s, en) = (e.start.max(t0), e.stop.min(end_w));
+        TlEvent {
+            id: e.id as i32, title: e.title.clone().into(),
+            x: ((s - t0) as f32 / 60.0) * PX_PER_MIN,
+            w: (((en - s) as f32 / 60.0) * PX_PER_MIN - 2.0).max(6.0),
+            live: e.start <= now && now < e.stop, rec: e.dvr_state.is_some(),
+        }
+    }).collect()
+}
+
+fn set_tl_row(ui: &MainWindow, uuid: &str, evs: &[Event], now: i64) {
+    let t0 = TL_T0.with(|c| c.get());
+    let m = ui.get_tl_rows();
+    for i in 0..m.row_count() {
+        if let Some(mut r) = m.row_data(i) {
+            if r.uuid == uuid { r.events = ModelRc::new(VecModel::from(tl_events(evs, t0, now))); m.set_row_data(i, r); break; }
+        }
+    }
+}
+
+fn selected_tag(m: &ModelRc<TagItem>) -> String {
+    m.iter().find(|t| t.selected).map(|t| t.uuid.to_string()).unwrap_or_default()
+}
+
+/// Build the timeline for the channels of one group (empty = all) and fill it channel by channel.
+fn load_timeline(w: slint::Weak<MainWindow>, session: Shared, tag: String) {
+    rt().spawn(async move {
+        let Some(s) = session.lock().await.clone() else { return };
+        let gen = TL_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+        let chans: Vec<String> = s.channels.iter().filter(|c| tag.is_empty() || c.tags.contains(&tag)).map(|c| c.uuid.clone()).collect();
+        let now = fmt::now_ts();
+        let t0 = ((now - 1800) / 1800) * 1800;
+        {
+            let s = s.clone(); let chans = chans.clone();
+            ui_do(&w, move |ui| {
+                TL_T0.with(|c| c.set(t0));
+                let off = fmt::local_offset();
+                let rows: Vec<TlRow> = chans.iter().filter_map(|u| s.channels.iter().find(|c| c.uuid == *u)).map(|c| {
+                    let (logo, has_logo) = logo_for(&c.uuid);
+                    TlRow { uuid: c.uuid.clone().into(), name: c.name.clone().into(), initials: initials(&c.name).into(), logo, has_logo, events: ModelRc::default() }
+                }).collect();
+                let ticks: Vec<Tick> = (0..=(WINDOW_MIN / 30)).map(|i| {
+                    let ts = t0 + i * 1800;
+                    Tick { x: (i * 30) as f32 * PX_PER_MIN, label: fmt::hm(ts, off).into() }
+                }).collect();
+                ui.set_tl_rows(ModelRc::new(VecModel::from(rows)));
+                ui.set_tl_ticks(ModelRc::new(VecModel::from(ticks)));
+                ui.set_tl_width(WINDOW_MIN as f32 * PX_PER_MIN);
+                ui.set_tl_now_x(((now - t0) as f32 / 60.0) * PX_PER_MIN);
+                ui.set_tl_busy(!chans.is_empty());
+            });
+        }
+        let remaining = Arc::new(AtomicUsize::new(chans.len()));
+        let gate = Arc::new(tokio::sync::Semaphore::new(6));
+        for uuid in chans {
+            let (s, w, gate, remaining) = (s.clone(), w.clone(), gate.clone(), remaining.clone());
+            tokio::spawn(async move {
+                let _p = gate.acquire().await;
+                let res = s.api.epg_channel(&uuid, 40).await;
+                ui_do(&w, move |ui| {
+                    if TL_GEN.load(Ordering::SeqCst) != gen { return; } // a newer timeline replaced this one
+                    if let Ok(ev) = res { register(&ev); set_tl_row(ui, &uuid, &ev, now); }
+                    if remaining.fetch_sub(1, Ordering::SeqCst) == 1 { ui.set_tl_busy(false); }
+                });
+            });
+        }
+    });
+}
+
+/// Re-read one channel's programmes (after recording or cancelling) and redraw its timeline row.
+fn refresh_channel(w: &slint::Weak<MainWindow>, s: Arc<Session>, uuid: String) {
+    let w = w.clone();
+    rt().spawn(async move {
+        if let Ok(ev) = s.api.epg_channel(&uuid, 40).await {
+            let now = fmt::now_ts();
+            ui_do(&w, move |ui| { register(&ev); set_tl_row(ui, &uuid, &ev, now); });
+        }
+    });
+}
+
+/// What the Guide tab shows when it is opened or its mode changes.
+fn guide_enter(ui: &MainWindow, w: &slint::Weak<MainWindow>, session: &Shared) {
+    match ui.get_guide_mode() {
+        0 => { if ui.get_tl_rows().row_count() == 0 { load_timeline(w.clone(), session.clone(), selected_tag(&ui.get_guide_tags())); } }
+        1 => ui.invoke_load_guide(ui.get_guide_index()),
+        _ => {}
+    }
 }
 
 fn load_recordings(w: &slint::Weak<MainWindow>, session: &Shared, kind: i32) {
@@ -239,7 +352,7 @@ fn start_playback(w: slint::Weak<MainWindow>, session: Shared, slot: Slot, targe
             // If the user already started something newer while we were launching, the newer one wins.
             let mut g = slot.lock().unwrap();
             let pb = Playback { gen, _kill: kill_tx, signal };
-            if g.as_ref().map_or(true, |p| p.gen < gen) { *g = Some(pb); } else { drop(pb); }
+            if g.as_ref().is_none_or(|p| p.gen < gen) { *g = Some(pb); } else { drop(pb); }
         }
 
         // When the player window is closed, release the signal/tuner (but not if a newer playback replaced us).
@@ -309,8 +422,15 @@ pub fn run() -> Result<(), slint::PlatformError> {
                     Ok(s) => {
                         let s = Arc::new(s);
                         let names: Vec<slint::SharedString> = s.channels.iter().map(|c| c.name.clone().into()).collect();
-                        let tags: Vec<TagItem> = s.api.tags().await.unwrap_or_default().into_iter()
-                            .map(|t| TagItem { uuid: t.uuid.into(), name: t.name.into(), selected: false }).collect();
+                        let saved = config::load();
+                        let all_tags = s.api.tags().await.unwrap_or_default();
+                        let known = |u: &str| all_tags.iter().any(|t| t.uuid == u);
+                        let (live_tag, guide_tag) = (
+                            if known(&saved.last_tag) { saved.last_tag.clone() } else { String::new() },
+                            if known(&saved.last_guide_tag) { saved.last_guide_tag.clone() } else { String::new() },
+                        );
+                        let mk = |sel: &str| -> Vec<TagItem> { all_tags.iter().map(|t| TagItem { uuid: t.uuid.clone().into(), name: t.name.clone().into(), selected: t.uuid == sel }).collect() };
+                        let (tags, gtags) = (mk(&live_tag), mk(&guide_tag));
                         let admin = s.permissions.admin;
                         let info = format!("{}{}", s.api.addr.base_url(), if s.has_htsp() { "" } else { " (HTSP not reachable: live signal only for admins)" });
                         let me = format!("Signed in as {}{}", if opts.user.is_empty() { "anonymous".to_string() } else { opts.user.clone() }, if admin { " · Administrator" } else { "" });
@@ -324,12 +444,14 @@ pub fn run() -> Result<(), slint::PlatformError> {
                         let _ = slint::invoke_from_event_loop(move || {
                             let Some(ui) = w.upgrade() else { return };
                             LOGOS.with(|l| l.borrow_mut().clear());
-                            let items = channel_items(&s2, "");
+                            let items = channel_items(&s2, &live_tag);
                             load_logos(w.clone(), s2);
                             ui.set_busy(false);
                             ui.set_channels(ModelRc::new(VecModel::from(items)));
                             ui.set_channel_names(ModelRc::new(VecModel::from(names)));
                             ui.set_tags(ModelRc::new(VecModel::from(tags)));
+                            ui.set_guide_tags(ModelRc::new(VecModel::from(gtags)));
+                            ui.set_tl_rows(ModelRc::default());
                             ui.set_nav(ModelRc::new(VecModel::from(nav_items(admin))));
                             ui.set_is_admin(admin);
                             ui.set_server_info(info.into());
@@ -351,7 +473,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
     ui.on_tab_changed({
         let (w, session) = (ui.as_weak(), session.clone());
         move |t| match t {
-            1 => { if let Some(ui) = w.upgrade() { ui.invoke_load_guide(ui.get_guide_index()); } }
+            1 => { if let Some(ui) = w.upgrade() { guide_enter(&ui, &w, &session); } }
             2 => { if let Some(ui) = w.upgrade() { load_recordings(&w, &session, ui.get_rec_kind()); } }
             4 => { if let Some(ui) = w.upgrade() { ui.invoke_refresh_server(); } }
             _ => {}
@@ -371,6 +493,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                     let sel = if was { String::new() } else { uuid };
                     let next: Vec<TagItem> = cur.into_iter().map(|mut t| { t.selected = t.uuid == sel.as_str(); t }).collect();
                     ui.set_tags(ModelRc::new(VecModel::from(next)));
+                    { let sel = sel.clone(); config::update(|c| c.last_tag = sel); }
                     ui.set_channels(ModelRc::new(VecModel::from(channel_items(&s, &sel))));
                 });
             });
@@ -473,6 +596,76 @@ pub fn run() -> Result<(), slint::PlatformError> {
     ui.on_load_recordings({
         let (w, session) = (ui.as_weak(), session.clone());
         move |k| load_recordings(&w, &session, k)
+    });
+
+    ui.on_select_guide_tag({
+        let (w, session) = (ui.as_weak(), session.clone());
+        move |uuid| {
+            let Some(ui) = w.upgrade() else { return };
+            let cur: Vec<TagItem> = ui.get_guide_tags().iter().collect();
+            let was = cur.iter().any(|t| t.uuid == uuid.as_str() && t.selected);
+            let sel = if was { String::new() } else { uuid.to_string() };
+            let next: Vec<TagItem> = cur.into_iter().map(|mut t| { t.selected = t.uuid == sel.as_str(); t }).collect();
+            ui.set_guide_tags(ModelRc::new(VecModel::from(next)));
+            { let sel = sel.clone(); config::update(|c| c.last_guide_tag = sel); }
+            load_timeline(w.clone(), session.clone(), sel);
+        }
+    });
+
+    ui.on_guide_mode_changed({
+        let (w, session) = (ui.as_weak(), session.clone());
+        move |_| { if let Some(ui) = w.upgrade() { guide_enter(&ui, &w, &session); } }
+    });
+
+    ui.on_event_clicked({
+        let (w, session) = (ui.as_weak(), session.clone());
+        move |id| {
+            let Some(ev) = EVENTS.with(|m| m.borrow().get(&id).cloned()) else { return };
+            let Some(ui) = w.upgrade() else { return };
+            ui.set_detail(event_items(std::slice::from_ref(&ev)).remove(0));
+            ui.set_detail_open(true);
+            if let Some(src) = ev.image.clone() {
+                let (w, session) = (w.clone(), session.clone());
+                rt().spawn(async move {
+                    let Some(s) = session.lock().await.clone() else { return };
+                    let Ok(bytes) = s.api.image(&src).await else { return };
+                    let Some((wd, ht, px)) = tokio::task::spawn_blocking(move || decode_rgba(&bytes)).await.ok().flatten() else { return };
+                    ui_do(&w, move |ui| {
+                        if ui.get_detail().id != id { return; } // the person already opened something else
+                        let mut d = ui.get_detail();
+                        d.poster = Image::from_rgba8(SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(&px, wd, ht));
+                        d.has_poster = true;
+                        ui.set_detail(d);
+                    });
+                });
+            }
+        }
+    });
+
+    ui.on_detail_record({
+        let (w, session) = (ui.as_weak(), session.clone());
+        move |id, channel| {
+            let (w, session, channel) = (w.clone(), session.clone(), channel.to_string());
+            rt().spawn(async move {
+                let Some(s) = session.lock().await.clone() else { return };
+                let msg = match s.api.record_event(id as u32).await { Ok(()) => "Scheduled".to_string(), Err(e) => e.user_message() };
+                refresh_channel(&w, s, channel);
+                ui_do(&w, move |ui| { ui.set_toast(msg.into()); ui.set_detail_open(false); if ui.get_tab() == 1 && ui.get_guide_mode() == 1 { ui.invoke_load_guide(ui.get_guide_index()); } });
+            });
+        }
+    });
+
+    ui.on_detail_cancel({
+        let (w, session) = (ui.as_weak(), session.clone());
+        move |dvr, channel| {
+            let (w, session, dvr, channel) = (w.clone(), session.clone(), dvr.to_string(), channel.to_string());
+            rt().spawn(async move {
+                let Some(s) = session.lock().await.clone() else { return };
+                let msg = match s.api.cancel_recording(&dvr).await { Ok(()) => "Recording cancelled".to_string(), Err(e) => e.user_message() };
+                refresh_channel(&w, s, channel);
+                ui_do(&w, move |ui| { ui.set_toast(msg.into()); ui.set_detail_open(false); if ui.get_tab() == 1 && ui.get_guide_mode() == 1 { ui.invoke_load_guide(ui.get_guide_index()); } });
+            });
+        }
     });
 
     ui.on_play({

@@ -14,6 +14,9 @@ pub fn range(start: i64, stop: i64, now: i64, off: FixedOffset) -> String {
     else { format!("{} {}", s.format("%a %d %b"), times) }
 }
 
+/// "21:30" in the viewer's time zone.
+pub fn hm(ts: i64, off: FixedOffset) -> String { at(ts, off).format("%H:%M").to_string() }
+
 pub fn local_offset() -> FixedOffset { Local::now().offset().fix() }
 pub fn now_ts() -> i64 { Local::now().timestamp() }
 

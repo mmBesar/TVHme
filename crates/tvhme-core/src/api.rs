@@ -78,6 +78,10 @@ pub struct Event {
     pub stop: i64,
     pub title: String,
     pub summary: String,
+    /// Long text; empty when the broadcaster gave none.
+    pub description: String,
+    /// Picture for the programme (`imagecache/<id>` or a URL), when the server has one.
+    pub image: Option<String>,
     /// Set when this event is scheduled/recording/recorded (`dvrUuid`, `dvrState`).
     pub dvr_uuid: Option<String>,
     pub dvr_state: Option<String>,
@@ -182,6 +186,7 @@ struct RawFullEvent {
     title: String,
     summary: String,
     description: String,
+    image: Option<String>,
     #[serde(rename = "dvrUuid")] dvr_uuid: Option<String>,
     #[serde(rename = "dvrState")] dvr_state: Option<String>,
 }
@@ -377,7 +382,8 @@ impl Api {
         g.entries.into_iter().map(|e| Event {
             id: e.event_id, channel_uuid: e.channel_uuid, channel_name: e.channel_name, start: e.start, stop: e.stop,
             title: e.title,
-            summary: if e.summary.is_empty() { e.description } else { e.summary },
+            summary: if e.summary.is_empty() { e.description.clone() } else { e.summary },
+            description: e.description, image: e.image.filter(|s| !s.is_empty()),
             dvr_uuid: e.dvr_uuid.filter(|s| !s.is_empty()), dvr_state: e.dvr_state.filter(|s| !s.is_empty()),
         }).collect()
     }

@@ -227,8 +227,8 @@ async fn http_conn(mut stream: TcpStream, webroot: String, state: Shared) {
             let n = now();
             let rec = st.recs.iter().find(|r| r.event_id == e.0);
             let dvr = rec.map(|r| format!(",\"dvrUuid\":\"{}\",\"dvrState\":\"{}\"", r.uuid, r.state)).unwrap_or_default();
-            format!("{{\"eventId\":{},\"channelUuid\":\"{}\",\"channelName\":\"{}\",\"start\":{},\"stop\":{},\"title\":\"{}\",\"summary\":\"{}\"{}}}",
-                e.0, e.1, channel_name(e.1), n + e.4, n + e.5, e.2, e.3, dvr)
+            format!("{{\"eventId\":{},\"channelUuid\":\"{}\",\"channelName\":\"{}\",\"start\":{},\"stop\":{},\"title\":\"{}\",\"summary\":\"{}\",\"description\":\"Longer text about {}\"{}{}}}",
+                e.0, e.1, channel_name(e.1), n + e.4, n + e.5, e.2, e.3, e.2, if e.0 == 1 { ",\"image\":\"imagecache/1\"" } else { "" }, dvr)
         };
         let rec_json = |r: &Rec| format!("{{\"uuid\":\"{}\",\"channelname\":\"{}\",\"disp_title\":\"{}\",\"disp_subtitle\":\"\",\"disp_description\":\"\",\"start\":{},\"stop\":{},\"status\":\"{}\",\"sched_status\":\"{}\",\"filesize\":0,\"errors\":0,\"enabled\":true}}",
             r.uuid, channel_name(&r.channel), r.title, r.start, r.stop, r.state, r.state);
