@@ -812,7 +812,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
             if ui.get_screen() != 1 { return; }
             let t0 = TL_T0.with(|c| c.get());
             if t0 > 0 { ui.set_tl_now_x(((fmt::now_ts() - t0) as f32 / 60.0) * PX_PER_MIN); }
-            if count % 6 == 0 && ui.get_tl_rows().row_count() > 0 {
+            if count.is_multiple_of(6) && ui.get_tl_rows().row_count() > 0 {
                 load_timeline(w.clone(), session.clone(), selected_tag(&ui.get_guide_tags()));
             }
         }
