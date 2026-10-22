@@ -435,7 +435,7 @@ static GEN: AtomicU64 = AtomicU64::new(1);
 
 enum Target { Channel(String), Recording(String) }
 
-fn start_playback(w: slint::Weak<MainWindow>, session: Shared, slot: Slot, target: Target, title: String, choice: i32) {
+fn start_playback(w: slint::Weak<MainWindow>, session: Shared, slot: Slot, target: Target, title: String, choice: i32, record: bool) {
     rt().spawn(async move {
         let Some(s) = session.lock().await.clone() else { return };
         let gen = GEN.fetch_add(1, Ordering::SeqCst);
@@ -450,8 +450,18 @@ fn start_playback(w: slint::Weak<MainWindow>, session: Shared, slot: Slot, targe
         { let d = format!("Sent to the player: {}", Session::describe_url(&url)); ui_do(&w, move |ui| ui.set_play_note(d.into())); }
 
         #[cfg(not(target_os = "android"))]
-        let child = match player::spawn(&url, &title, choice) {
-            Ok(c) => Some(c),
+        let record_to = if record && matches!(target, Target::Channel(_)) {
+            let stamp = chrono::Local::now().format("%Y-%m-%d %H-%M").to_string();
+            player::record_path(&title, &stamp)
+        } else { None };
+        let child = match player::spawn(&url, &title, choice, record_to.as_deref()) {
+            Ok(c) => {
+                if let Some(f) = &record_to {
+                    let n = format!("Recording to {}", f.display());
+                    ui_do(&w, move |ui| ui.set_play_note(n.into()));
+                }
+                Some(c)
+            }
             Err(e) => { ui_do(&w, move |ui| ui.set_play_note(e.into())); None }
         };
         #[cfg(target_os = "android")]
@@ -525,6 +535,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
     ui.set_insecure(saved.insecure);
     ui.set_t_mode(saved.mode); ui.set_t_flavor(saved.flavor); ui.set_t_accent(saved.accent);
     ui.set_player(saved.player);
+    ui.set_record_local(saved.record_local);
+    ui.set_can_record_local(cfg!(not(target_os = "android")));
     ui.set_player_names(ModelRc::new(VecModel::from(player::names().into_iter().map(slint::SharedString::from).collect::<Vec<_>>())));
     apply_theme(&ui, choice_from_indices(saved.flavor, saved.accent, saved.mode));
     let session: Shared = Default::default();
@@ -789,7 +801,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
         move |uuid| {
             let Some(ui) = w.upgrade() else { return };
             let title = ui.get_channels().iter().find(|c| c.uuid == uuid).map(|c| c.name.to_string()).unwrap_or_default();
-            start_playback(w.clone(), session.clone(), slot.clone(), Target::Channel(uuid.to_string()), title, ui.get_player());
+            start_playback(w.clone(), session.clone(), slot.clone(), Target::Channel(uuid.to_string()), title, ui.get_player(), ui.get_record_local());
         }
     });
 
@@ -798,7 +810,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
         move |uuid| {
             let Some(ui) = w.upgrade() else { return };
             let title = ui.get_recordings().iter().find(|r| r.uuid == uuid).map(|r| r.title.to_string()).unwrap_or_else(|| "Recording".into());
-            start_playback(w.clone(), session.clone(), slot.clone(), Target::Recording(uuid.to_string()), title, ui.get_player());
+            start_playback(w.clone(), session.clone(), slot.clone(), Target::Recording(uuid.to_string()), title, ui.get_player(), false);
         }
     });
 
@@ -815,6 +827,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
     });
 
     ui.on_player_changed(|i| config::update(|c| c.player = i));
+    ui.on_record_local_changed(|b| config::update(|c| c.record_local = b));
 
     ui.on_stop_playback({
         let (w, slot) = (ui.as_weak(), slot.clone());

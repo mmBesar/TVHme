@@ -367,6 +367,9 @@ export component MainWindow inherits Window {
     in-out property <int> t-flavor: 2;
     in-out property <int> t-accent: 3;
     in-out property <int> player: 0;
+    in-out property <bool> record-local: false;
+    in property <bool> can-record-local: false;
+    callback record-local-changed(bool);
     in property <[string]> player-names;
 
     callback connect(string, string, string, string, bool, string);
@@ -746,6 +749,10 @@ export component MainWindow inherits Window {
                                 }
                                 Text { text: "Video player"; color: Theme.fg; font-size: 22px; font-weight: 700; }
                                 TSelect { model: root.player-names; current-index <=> root.player; selected(i) => { root.player-changed(i); } }
+                                if root.can-record-local: CheckBox {
+                                    text: "Also save live TV to Videos/TVHme (mpv)"; checked <=> root.record-local;
+                                    toggled => { root.record-local-changed(root.record-local); }
+                                }
                             }
                             AppearancePanel {
                                 mode-index <=> root.t-mode; flavor-index <=> root.t-flavor; accent-index <=> root.t-accent;

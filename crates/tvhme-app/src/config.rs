@@ -26,13 +26,15 @@ pub struct Saved {
     pub flavor: i32,
     pub accent: i32,
     pub player: i32,
+    /// Desktop: also save live TV to a file on this computer while watching (mpv only).
+    pub record_local: bool,
 }
 
 impl Default for Saved {
     fn default() -> Self {
         // Catppuccin Macchiato + Mauve, HTSP on Tvheadend's usual port
         Saved { address: String::new(), htsp_port: "9982".into(), user: String::new(), pass: String::new(),
-                insecure: false, auth_code: String::new(), auto_login: false, last_tag: String::new(), last_guide_tag: String::new(), mode: 0, flavor: 2, accent: 3, player: 0 }
+                insecure: false, auth_code: String::new(), auto_login: false, last_tag: String::new(), last_guide_tag: String::new(), mode: 0, flavor: 2, accent: 3, player: 0, record_local: false }
     }
 }
 
