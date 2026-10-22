@@ -27,7 +27,11 @@ pub const CHANNELS: [(&str, u32, &str); 3] = [("uuid-one", 1, "Mock One"), ("uui
 struct Rec { uuid: String, event_id: u32, channel: String, title: String, start: i64, stop: i64, state: &'static str }
 
 #[derive(Default)]
-struct State { recs: Vec<Rec>, next: u32 }
+struct State { recs: Vec<Rec>, next: u32, enabled: std::collections::HashMap<String, bool> }
+
+/// A channel the admin has switched off (only visible to the management call).
+pub const HIDDEN: (&str, u32, &str) = ("uuid-hidden", 9, "Mock Hidden");
+fn chan_enabled(st: &State, u: &str) -> bool { st.enabled.get(u).copied().unwrap_or(u != HIDDEN.0) }
 
 type Shared = Arc<Mutex<State>>;
 
@@ -238,9 +242,21 @@ async fn http_conn(mut stream: TcpStream, webroot: String, state: Shared) {
             "/api/config/load" => if is_admin { json_ok("{\"entries\":[]}".into()) } else { forbidden() },
             "/api/channel/grid" => {
                 let tags = |u: &str| match u { "uuid-one" => "[\"tag-news\"]", "uuid-two" => "[\"tag-news\",\"tag-movies\"]", _ => "[\"tag-movies\"]" };
-                let e: Vec<String> = CHANNELS.iter().map(|(u, num, name)| format!("{{\"uuid\":\"{u}\",\"enabled\":true,\"name\":\"{name}\",\"number\":{num}{},\"tags\":{}}}", if *u == "uuid-two" { ",\"icon_public_url\":\"imagecache/1\"" } else { "" }, tags(u))).collect();
-                json_ok(format!("{{\"entries\":[{}],\"total\":{}}}", e.join(","), CHANNELS.len()))
+                let st = state.lock().unwrap();
+                let e: Vec<String> = CHANNELS.iter().chain(std::iter::once(&HIDDEN))
+                    // a normal account only sees enabled channels; the admin sees all of them (as Tvheadend does)
+                    .filter(|(u, _, _)| is_admin || chan_enabled(&st, u))
+                    .map(|(u, num, name)| format!("{{\"uuid\":\"{u}\",\"enabled\":{},\"name\":\"{name}\",\"number\":{num}{},\"tags\":{}}}", chan_enabled(&st, u), if *u == "uuid-two" { ",\"icon_public_url\":\"imagecache/1\"" } else { "" }, tags(u))).collect();
+                json_ok(format!("{{\"entries\":[{}],\"total\":{}}}", e.join(","), e.len()))
             }
+            "/api/idnode/save" if is_admin => {
+                let node: serde_json::Value = serde_json::from_str(&param("node").unwrap_or_default()).unwrap_or_default();
+                if let (Some(u), Some(en)) = (node["uuid"].as_str(), node["enabled"].as_bool()) {
+                    state.lock().unwrap().enabled.insert(u.to_string(), en);
+                }
+                json_ok("{}".into())
+            }
+            "/api/idnode/save" => forbidden(),
             "/api/channeltag/grid" => json_ok("{\"entries\":[{\"uuid\":\"tag-movies\",\"name\":\"Movies\",\"enabled\":true,\"index\":2},{\"uuid\":\"tag-news\",\"name\":\"News\",\"enabled\":true,\"index\":1}],\"total\":2}".into()),
             "/api/epg/events/grid" => {
                 let st = state.lock().unwrap();

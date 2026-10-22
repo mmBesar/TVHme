@@ -198,6 +198,12 @@ pub fn is_rtl(s: &str) -> bool {
     false
 }
 
+fn manage_items(v: &[tvhme_core::api::ManagedChannel]) -> ModelRc<ManageItem> {
+    ModelRc::new(VecModel::from(v.iter().map(|c| ManageItem {
+        uuid: c.uuid.clone().into(), number: c.number as i32, name: c.name.clone().into(), enabled: c.enabled,
+    }).collect::<Vec<_>>()))
+}
+
 fn matches_filter(c: &tvhme_core::api::Channel, filter: &str) -> bool {
     let f = filter.trim().to_lowercase();
     f.is_empty() || c.name.to_lowercase().contains(&f) || c.number.to_string().starts_with(&f)
@@ -853,6 +859,22 @@ pub fn run() -> Result<(), slint::PlatformError> {
         }
     });
 
+    ui.on_set_channel_enabled({
+        let (w, session) = (ui.as_weak(), session.clone());
+        move |uuid, enabled| {
+            let (w, session, uuid) = (w.clone(), session.clone(), uuid.to_string());
+            rt().spawn(async move {
+                let Some(s) = session.lock().await.clone() else { return };
+                let msg = match s.api.set_channel_enabled(&uuid, enabled).await {
+                    Ok(()) => if enabled { "Channel on" } else { "Channel off" }.to_string(),
+                    Err(e) => e.user_message(),
+                };
+                let managed = s.api.managed_channels().await.unwrap_or_default();
+                ui_do(&w, move |ui| { ui.set_toast(msg.into()); ui.set_manage_channels(manage_items(&managed)); });
+            });
+        }
+    });
+
     ui.on_refresh_server({
         let (w, session) = (ui.as_weak(), session.clone());
         move || {
@@ -861,6 +883,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
             rt().spawn(async move {
                 let Some(s) = session.lock().await.clone() else { return };
                 let res = s.server_overview().await;
+                let managed = s.api.managed_channels().await.unwrap_or_default();
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = w.upgrade() else { return };
                     ui.set_server_busy(false);
@@ -884,6 +907,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                                 detail: format!("{} · {}", c.kind, c.peer).into(),
                             }).collect();
                             let ver = format!("{} {} (API {})", o.info.name, o.info.sw_version, o.info.api_version);
+                            ui.set_manage_channels(manage_items(&managed));
                             ui.set_tuners(ModelRc::new(VecModel::from(tuners)));
                             ui.set_streams(ModelRc::new(VecModel::from(streams)));
                             ui.set_clients(ModelRc::new(VecModel::from(clients)));

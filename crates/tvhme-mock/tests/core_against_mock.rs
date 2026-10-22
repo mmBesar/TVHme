@@ -263,3 +263,19 @@ async fn events_carry_episode_facts_and_credits() {
     let plain = s.api.epg_search("movie", false, 10).await.unwrap();
     assert!(plain[0].episode.is_empty() && plain[0].facts.is_empty() && plain[0].credits.is_empty());
 }
+
+#[tokio::test]
+async fn admin_can_switch_channels_off_and_on() {
+    let m = tvhme_mock::spawn().await;
+    let a = Session::connect(opts(addr(&m), "admin", "admin", None)).await.unwrap();
+    let all = a.api.managed_channels().await.unwrap();
+    assert_eq!(all.len(), 4);
+    assert!(!all.iter().find(|c| c.name == "Mock Hidden").unwrap().enabled);
+    a.api.set_channel_enabled("uuid-hidden", true).await.unwrap();
+    a.api.set_channel_enabled("uuid-one", false).await.unwrap();
+    let u = Session::connect(opts(addr(&m), "user", "user", None)).await.unwrap();
+    let names: Vec<_> = u.channels.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, ["Mock Two", "Mock Three", "Mock Hidden"]);
+    // a normal account may not change channels
+    assert!(matches!(u.api.set_channel_enabled("uuid-two", false).await, Err(ApiError::Status(403))));
+}

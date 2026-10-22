@@ -68,6 +68,10 @@ pub struct Channel {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tag { pub uuid: String, pub name: String, pub index: i64 }
 
+/// A channel as the admin manages it (disabled ones included).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ManagedChannel { pub uuid: String, pub number: u32, pub name: String, pub enabled: bool }
+
 /// One EPG event from `epg/events/grid`.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Event {
@@ -413,6 +417,22 @@ impl Api {
             .collect();
         v.sort_by(|a, b| (a.number == 0, a.number, &a.name).cmp(&(b.number == 0, b.number, &b.name)));
         Ok(v)
+    }
+
+    /// Every channel including disabled ones. Tvheadend only returns the disabled ones to accounts
+    /// that may manage channels, so for others this is the same as `channels` without tags.
+    pub async fn managed_channels(&self) -> Result<Vec<ManagedChannel>, ApiError> {
+        let g: Grid<RawChannel> = self.json("/api/channel/grid?start=0&limit=10000").await?;
+        let mut v: Vec<ManagedChannel> = g.entries.into_iter()
+            .map(|c| ManagedChannel { uuid: c.uuid, number: c.number, name: c.name, enabled: c.enabled.unwrap_or(true) }).collect();
+        v.sort_by(|a, b| (a.number == 0, a.number, &a.name).cmp(&(b.number == 0, b.number, &b.name)));
+        Ok(v)
+    }
+
+    /// Switch a channel on or off (admin only; the server answers 403 otherwise).
+    pub async fn set_channel_enabled(&self, uuid: &str, enabled: bool) -> Result<(), ApiError> {
+        let node = serde_json::json!({ "uuid": uuid, "enabled": enabled }).to_string();
+        self.action("/api/idnode/save", &[("node", &node)]).await
     }
 
     /// Currently airing event per channel uuid.

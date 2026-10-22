@@ -7,6 +7,7 @@ export struct TagItem { uuid: string, name: string, selected: bool }
 export struct EventItem { id: int, channel: string, title: string, when: string, summary: string, state: string, dvr-uuid: string, logo: image, has-logo: bool, initials: string, description: string, channel-uuid: string, poster: image, has-poster: bool, subtitle: string, episode: string, facts: string, credits: string, rtl: bool }
 export struct TlEvent { id: int, title: string, x: length, w: length, live: bool, rec: bool, rtl: bool }
 export struct TlRow { uuid: string, name: string, initials: string, logo: image, has-logo: bool, events: [TlEvent] }
+export struct ManageItem { uuid: string, number: int, name: string, enabled: bool }
 export struct Tick { x: length, label: string }
 export struct RecItem { uuid: string, title: string, channel: string, when: string, status: string, running: bool }
 
@@ -350,6 +351,8 @@ export component MainWindow inherits Window {
     in property <string> snr-text;
     in property <string> ss-text;
     in property <string> server-info;
+    in property <[ManageItem]> manage-channels;
+    callback set-channel-enabled(string, bool);
     in property <string> me-text;
     in property <string> server-error;
     in property <bool> server-busy: false;
@@ -726,7 +729,20 @@ export component MainWindow inherits Window {
                             InfoSection { heading: "Tuners"; rows: root.tuners; empty-text: "No tuner information"; }
                             InfoSection { heading: "Active streams"; rows: root.streams; empty-text: "No active streams"; }
                             InfoSection { heading: "Connected clients"; rows: root.clients; empty-text: "No connected clients"; }
-                            Text { text: "More management (channels, networks, recorder settings, users) is planned. The server decides what each account may change."; color: Theme.fg-dim; wrap: word-wrap; font-size: 12px; }
+                            VerticalLayout {
+                                spacing: 6px;
+                                Text { text: "Channels"; color: Theme.acc; font-weight: 700; font-size: 14px; }
+                                Text { text: "Switch a channel off to hide it for everyone. Sign in again to refresh Live and Guide."; color: Theme.fg-dim; font-size: 12px; wrap: word-wrap; }
+                                for c in root.manage-channels: Rectangle {
+                                    background: Theme.card; border-radius: 8px; height: 48px;
+                                    HorizontalLayout {
+                                        padding: 6px; padding-left: 12px; spacing: 10px;
+                                        Text { text: c.number > 0 ? c.number + "  " + c.name : c.name; color: c.enabled ? Theme.fg : Theme.fg-dim; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                                        TButton { width: 80px; text: c.enabled ? "On" : "Off"; primary: c.enabled; clicked => { root.set-channel-enabled(c.uuid, !c.enabled); } }
+                                    }
+                                }
+                            }
+                            Text { text: "More management (networks, recorder settings, users) is planned. The server decides what each account may change."; color: Theme.fg-dim; wrap: word-wrap; font-size: 12px; }
                         }
                     }
                 }
