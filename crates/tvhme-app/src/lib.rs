@@ -575,11 +575,11 @@ fn start_playback(w: slint::Weak<MainWindow>, session: Shared, slot: Slot, targe
 }
 
 pub fn run() -> Result<(), slint::PlatformError> {
+    #[cfg(not(target_os = "android"))]
+    if let Some(code) = integrate::cli() { std::process::exit(code); }
     // The window's app id must match the .desktop file name (tvhme.desktop), or the bar/dock cannot find the icon.
     #[cfg(not(target_os = "android"))]
     let _ = slint::set_xdg_app_id("tvhme");
-    #[cfg(not(target_os = "android"))]
-    integrate::ensure();
     let ui = MainWindow::new()?;
     // Fallback in case the Android backend reports no safe-area inset: keep content below the status bar.
     #[cfg(target_os = "android")]
@@ -597,6 +597,9 @@ pub fn run() -> Result<(), slint::PlatformError> {
     ui.set_record_dir(saved.record_dir.clone().into());
     ui.set_audio_langs(saved.audio_langs.clone().into());
     ui.set_audio_only_preferred(saved.audio_only_preferred);
+    ui.set_can_integrate(cfg!(not(target_os = "android")));
+    #[cfg(not(target_os = "android"))]
+    ui.set_launcher_installed(integrate::installed());
     ui.set_can_record_local(cfg!(not(target_os = "android")));
     ui.set_player_names(ModelRc::new(VecModel::from(player::names().into_iter().map(slint::SharedString::from).collect::<Vec<_>>())));
     apply_theme(&ui, choice_from_indices(saved.flavor, saved.accent, saved.mode));
@@ -896,6 +899,19 @@ pub fn run() -> Result<(), slint::PlatformError> {
         config::update(move |c| c.audio_langs = l.clone());
     });
     ui.on_audio_only_preferred_changed(|b| config::update(|c| c.audio_only_preferred = b));
+    ui.on_toggle_launcher({
+        let w = ui.as_weak();
+        move || {
+            #[cfg(not(target_os = "android"))]
+            {
+                let r = if integrate::installed() { integrate::uninstall() } else { integrate::install() };
+                let msg = match r { Ok(m) => m, Err(e) => e };
+                if let Some(ui) = w.upgrade() { ui.set_launcher_installed(integrate::installed()); ui.set_toast(msg.into()); }
+            }
+            #[cfg(target_os = "android")]
+            let _ = &w;
+        }
+    });
     ui.on_toggle_local_record({
         let w = ui.as_weak();
         move || {

@@ -29,7 +29,7 @@ jobs:
       - name: System libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libgl1-mesa-dev librsvg2-bin file
+          sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libgl1-mesa-dev file
       - name: Test core and mock
         run: cargo test -p tvhme-core -p tvhme-mock -p tvhme-app
       - name: Build app
@@ -39,7 +39,7 @@ jobs:
           mkdir -p dist
           cp target/release/tvhme dist/tvhme
           cp assets/icon.svg dist/tvhme.svg
-          rsvg-convert -w 256 -h 256 assets/icon.svg -o dist/tvhme.png
+          mkdir -p dist/icons && cp assets/icons/*.png dist/icons/
           cp packaging/linux/tvhme.desktop packaging/linux/install.sh dist/
           tar czf tvhme-linux-${{ matrix.arch }}.tar.gz -C dist .
       - name: Package AppImage
@@ -50,8 +50,11 @@ jobs:
           rm -rf AppDir && mkdir -p AppDir/usr/bin
           cp target/release/tvhme AppDir/usr/bin/tvhme
           cp packaging/linux/tvhme.desktop AppDir/tvhme.desktop
-          rsvg-convert -w 512 -h 512 assets/icon.svg -o AppDir/tvhme.png
+          cp assets/icons/512x512.png AppDir/tvhme.png
           cp AppDir/tvhme.png AppDir/.DirIcon
+          for s in 32 48 64 128 256 512; do
+            mkdir -p AppDir/usr/share/icons/hicolor/${s}x${s}/apps && cp assets/icons/${s}x${s}.png AppDir/usr/share/icons/hicolor/${s}x${s}/apps/tvhme.png
+          done
           mkdir -p AppDir/usr/share/icons/hicolor/scalable/apps && cp assets/icon.svg AppDir/usr/share/icons/hicolor/scalable/apps/tvhme.svg
           ln -s usr/bin/tvhme AppDir/AppRun
           curl -fsSL -o appimagetool "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${{ matrix.appimage_arch }}.AppImage"
@@ -71,3 +74,42 @@ jobs:
           files: |
             tvhme-linux-${{ matrix.arch }}.tar.gz
             TVHme-${{ matrix.appimage_arch }}.AppImage
+
+  # RISC-V has no GitHub-hosted runner. This uses the free RISE runners, which need the
+  # "RISE RISC-V Runners" GitHub App installed on the repository (see README). Without it the job
+  # just waits and is cancelled after the timeout; the other builds are not affected.
+  build-riscv64:
+    runs-on: ubuntu-24.04-riscv
+    timeout-minutes: 90
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+      - name: Rust toolchain
+        run: |
+          command -v rustup >/dev/null && rustup update stable --no-self-update || true
+          cargo --version
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libgl1-mesa-dev file
+      - name: Test core and mock
+        run: cargo test -p tvhme-core -p tvhme-mock -p tvhme-app
+      - name: Build app
+        run: cargo build --release -p tvhme-app --bin tvhme
+      - name: Package tar.gz
+        run: |
+          mkdir -p dist/icons
+          cp target/release/tvhme dist/tvhme
+          cp assets/icon.svg dist/tvhme.svg
+          cp assets/icons/*.png dist/icons/
+          cp packaging/linux/tvhme.desktop packaging/linux/install.sh dist/
+          tar czf tvhme-linux-riscv64.tar.gz -C dist .
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tvhme-linux-riscv64
+          path: tvhme-linux-riscv64.tar.gz
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: tvhme-linux-riscv64.tar.gz

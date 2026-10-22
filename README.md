@@ -18,9 +18,12 @@ Status: early development.
 
 Or add `inputs.tvhme.url = "github:mmBesar/TVHme";` to your flake and use `inputs.tvhme.packages.${system}.default`.
 
-**Other Linux:** download `TVHme-x86_64.AppImage` (or `aarch64`) from the Releases page, `chmod +x`, run. Needs mpv or vlc for playback.
+**Other Linux:** download the AppImage (`TVHme-x86_64.AppImage` or `TVHme-aarch64.AppImage`) or the `tvhme-linux-<arch>.tar.gz` from the Releases page. Needs mpv (or VLC) for playback. RISC-V (`riscv64`) is offered as a tar.gz.
 
-**Android:** debug APK from the Android workflow artifacts.
+- **AppImage:** `chmod +x` and run. It is portable: it does not touch your system, so a loose AppImage has no menu entry or bar icon (that is how AppImages work everywhere). If you want one, either use an AppImage manager (AppImageLauncher, Gear Lever, ...) or press **Settings > App menu > Add to app menu**, or run `./TVHme-x86_64.AppImage --install-launcher` (undo with `--uninstall-launcher`). This only adds files under `~/.local/share` for your user.
+- **tar.gz:** unpack and run `./install.sh` (installs under `~/.local`, undo with `./install.sh --uninstall`).
+
+**Android:** download the APK from the Releases page: `arm64-v8a` for modern phones, `armeabi-v7a` for 32-bit ones, and the `android6` builds for Android 6 (experimental, only published when they build).
 
 ## Develop
 

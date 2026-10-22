@@ -1,8 +1,16 @@
-//! Desktop integration: a launcher entry and icon in the user's own folders, so panels, docks and
-//! app menus can show the TVHme icon even when the program was started as a loose binary or AppImage.
-//! Written only when missing or when it was written by us for a program that has since moved.
+//! Optional desktop integration, only when the user asks for it ("Add to app menu" in Settings, or
+//! `tvhme --install-launcher`): a launcher entry and the icon in all sizes in the user's own folders.
+//! Nothing here runs on its own. A portable AppImage stays portable until the person decides otherwise.
 
-const ICON_PNG: &[u8] = include_bytes!("../../../assets/icon-256.png");
+const ICONS: [(u32, &[u8]); 6] = [
+    (32, include_bytes!("../../../assets/icons/32x32.png")),
+    (48, include_bytes!("../../../assets/icons/48x48.png")),
+    (64, include_bytes!("../../../assets/icons/64x64.png")),
+    (128, include_bytes!("../../../assets/icons/128x128.png")),
+    (256, include_bytes!("../../../assets/icons/256x256.png")),
+    (512, include_bytes!("../../../assets/icons/512x512.png")),
+];
+const ICON_SVG: &[u8] = include_bytes!("../../../assets/icon.svg");
 const MARK: &str = "X-TVHme-Managed=true";
 
 /// The text of the launcher entry for a program at `exec`.
@@ -12,32 +20,81 @@ pub fn desktop_entry(exec: &str) -> String {
     format!("[Desktop Entry]\nType=Application\nName=TVHme\nGenericName=Tvheadend client\nComment=Watch and manage Tvheadend\nExec={quoted}\nIcon=tvhme\nTerminal=false\nCategories=AudioVideo;Video;TV;Network;\nStartupWMClass=tvhme\n{MARK}\n")
 }
 
-/// Whether the entry at `existing` should be (re)written for `exec`.
-fn needs_write(existing: Option<&str>, exec: &str) -> bool {
-    match existing {
-        None => true,
-        Some(t) => t.contains(MARK) && !t.contains(&desktop_entry(exec)),
+#[cfg(not(target_os = "android"))]
+mod fs_part {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn data_dir() -> Result<PathBuf, String> {
+        std::env::var_os("XDG_DATA_HOME").map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("share")))
+            .ok_or_else(|| "No home folder found".to_string())
+    }
+
+    fn entry_path() -> Result<PathBuf, String> { Ok(data_dir()?.join("applications").join("tvhme.desktop")) }
+
+    /// The file the person started: the AppImage itself when run from one, else this program.
+    fn program() -> Result<String, String> {
+        std::env::var_os("APPIMAGE").map(PathBuf::from).or_else(|| std::env::current_exe().ok())
+            .and_then(|p| p.to_str().map(str::to_string)).ok_or_else(|| "Cannot tell where TVHme is stored".to_string())
+    }
+
+    /// Is a launcher entry made by TVHme in place?
+    pub fn installed() -> bool {
+        entry_path().ok().and_then(|p| std::fs::read_to_string(p).ok()).is_some_and(|t| t.contains(MARK))
+    }
+
+    pub fn install() -> Result<String, String> {
+        let (data, exec) = (data_dir()?, program()?);
+        let entry = entry_path()?;
+        // never replace an entry the person or a package made
+        if let Ok(t) = std::fs::read_to_string(&entry) {
+            if !t.contains(MARK) { return Err(format!("{} already exists and was not made by TVHme; left alone", entry.display())); }
+        }
+        let err = |e: std::io::Error| e.to_string();
+        for (size, png) in ICONS {
+            let dir = data.join("icons").join("hicolor").join(format!("{size}x{size}")).join("apps");
+            std::fs::create_dir_all(&dir).map_err(err)?;
+            std::fs::write(dir.join("tvhme.png"), png).map_err(err)?;
+        }
+        let sdir = data.join("icons").join("hicolor").join("scalable").join("apps");
+        std::fs::create_dir_all(&sdir).map_err(err)?;
+        std::fs::write(sdir.join("tvhme.svg"), ICON_SVG).map_err(err)?;
+        std::fs::create_dir_all(data.join("applications")).map_err(err)?;
+        std::fs::write(&entry, desktop_entry(&exec)).map_err(err)?;
+        Ok(format!("Added TVHme to the app menu ({exec}). Some panels need a restart to notice."))
+    }
+
+    pub fn uninstall() -> Result<String, String> {
+        let data = data_dir()?;
+        let entry = entry_path()?;
+        match std::fs::read_to_string(&entry) {
+            Ok(t) if t.contains(MARK) => { std::fs::remove_file(&entry).map_err(|e| e.to_string())?; }
+            Ok(_) => return Err("The menu entry was not made by TVHme; left alone".into()),
+            Err(_) => {}
+        }
+        for (size, _) in ICONS { let _ = std::fs::remove_file(data.join("icons").join("hicolor").join(format!("{size}x{size}")).join("apps").join("tvhme.png")); }
+        let _ = std::fs::remove_file(data.join("icons").join("hicolor").join("scalable").join("apps").join("tvhme.svg"));
+        Ok("Removed TVHme from the app menu".into())
+    }
+
+    /// Command-line switches that do their job and exit. `None` means: start the app normally.
+    pub fn cli() -> Option<i32> {
+        let arg = std::env::args().nth(1)?;
+        let result = match arg.as_str() {
+            "--install-launcher" => install(),
+            "--uninstall-launcher" => uninstall(),
+            "--help" | "-h" => {
+                println!("TVHme\n\n  --install-launcher    add TVHme and its icon to your app menu (this user only)\n  --uninstall-launcher  remove them again");
+                return Some(0);
+            }
+            _ => return None,
+        };
+        Some(match result { Ok(m) => { println!("{m}"); 0 } Err(e) => { eprintln!("{e}"); 1 } })
     }
 }
-
-/// Best effort: any failure is ignored (read-only home, sandbox...).
 #[cfg(not(target_os = "android"))]
-pub fn ensure() {
-    use std::path::PathBuf;
-    // An AppImage runs from a temporary mount: the file the user started is the one to launch again
-    let exe = std::env::var_os("APPIMAGE").map(PathBuf::from).or_else(|| std::env::current_exe().ok());
-    let Some(exe) = exe.and_then(|p| p.to_str().map(str::to_string)) else { return };
-    let data = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("share")));
-    let Some(data) = data else { return };
-    let entry = data.join("applications").join("tvhme.desktop");
-    let existing = std::fs::read_to_string(&entry).ok();
-    if !needs_write(existing.as_deref(), &exe) { return; }
-    let icon_dir = data.join("icons").join("hicolor").join("256x256").join("apps");
-    if std::fs::create_dir_all(&icon_dir).is_err() || std::fs::create_dir_all(data.join("applications")).is_err() { return; }
-    let _ = std::fs::write(icon_dir.join("tvhme.png"), ICON_PNG);
-    let _ = std::fs::write(&entry, desktop_entry(&exe));
-}
+pub use fs_part::{cli, install, installed, uninstall};
 
 #[cfg(test)]
 mod tests {
@@ -49,13 +106,31 @@ mod tests {
         assert!(t.contains("Icon=tvhme") && t.contains("StartupWMClass=tvhme") && t.contains(MARK));
     }
     #[test]
-    fn writes_only_when_missing_or_stale_and_ours() {
-        assert!(needs_write(None, "/a"));
-        let ours = desktop_entry("/a");
-        assert!(!needs_write(Some(&ours), "/a"));
-        assert!(needs_write(Some(&ours), "/b")); // we moved: update our own entry
-        assert!(!needs_write(Some("[Desktop Entry]\nExec=tvhme\n"), "/b")); // the user's or the installer's entry stays
+    fn icons_are_pngs_of_the_right_size() {
+        for (size, png) in ICONS {
+            assert_eq!(&png[1..4], b"PNG");
+            let w = u32::from_be_bytes([png[16], png[17], png[18], png[19]]);
+            assert_eq!(w, size);
+        }
     }
+    #[cfg(not(target_os = "android"))]
     #[test]
-    fn icon_is_a_png() { assert_eq!(&ICON_PNG[1..4], b"PNG"); }
+    fn install_and_remove_in_a_scratch_home_and_never_touch_foreign_entries() {
+        let home = std::env::temp_dir().join(format!("tvhme-integrate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        std::env::set_var("XDG_DATA_HOME", &home);
+        assert!(!installed());
+        install().unwrap();
+        assert!(installed());
+        assert!(home.join("icons/hicolor/512x512/apps/tvhme.png").exists() && home.join("icons/hicolor/scalable/apps/tvhme.svg").exists());
+        uninstall().unwrap();
+        assert!(!installed() && !home.join("icons/hicolor/128x128/apps/tvhme.png").exists());
+        // an entry made by someone else is left alone
+        std::fs::create_dir_all(home.join("applications")).unwrap();
+        std::fs::write(home.join("applications/tvhme.desktop"), "[Desktop Entry]\nExec=tvhme\n").unwrap();
+        assert!(install().is_err() && uninstall().is_err());
+        assert!(home.join("applications/tvhme.desktop").exists());
+        let _ = std::fs::remove_dir_all(&home);
+    }
 }

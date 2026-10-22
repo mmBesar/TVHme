@@ -382,6 +382,9 @@ export component MainWindow inherits Window {
     in-out property <string> audio-langs;
     in-out property <bool> audio-only-preferred: false;
     in-out property <bool> recording-local: false;
+    in property <bool> can-integrate: false;
+    in property <bool> launcher-installed: false;
+    callback toggle-launcher();
     callback record-dir-changed(string);
     callback audio-langs-changed(string);
     callback audio-only-preferred-changed(bool);
@@ -821,6 +824,12 @@ export component MainWindow inherits Window {
                                         toggled => { root.audio-only-preferred-changed(root.audio-only-preferred); }
                                     }
                                 }
+                            }
+                            if root.can-integrate: VerticalLayout {
+                                padding: 20px; padding-top: 0px; spacing: 8px;
+                                Text { text: "App menu"; color: Theme.fg; font-size: 22px; font-weight: 700; }
+                                Text { text: "Optional. Adds TVHme and its icon to this user's app menu so launchers and bars can show it. Nothing is installed unless you press the button."; color: Theme.fg-dim; font-size: 13px; wrap: word-wrap; }
+                                TButton { text: root.launcher-installed ? "Remove from app menu" : "Add to app menu"; clicked => { root.toggle-launcher(); } }
                             }
                             AppearancePanel {
                                 mode-index <=> root.t-mode; flavor-index <=> root.t-flavor; accent-index <=> root.t-accent;
