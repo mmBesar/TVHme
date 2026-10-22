@@ -147,6 +147,8 @@ component Chip inherits Rectangle {
     height: 34px; border-radius: 17px;
     width: label.preferred-width + 28px;
     background: root.active ? Theme.acc : (ta.has-hover ? Theme.card-hi : Theme.card);
+    border-width: cfs.has-focus ? 2px : 0px; border-color: Theme.fg;
+    cfs := FocusScope { key-pressed(e) => { if (e.text == Key.Return || e.text == " ") { root.clicked(); return accept; } reject } }
     label := Text { x: 14px; text: root.text; color: root.active ? Theme.on-acc : Theme.fg; vertical-alignment: center; font-size: 13px; font-weight: 600; height: parent.height; }
     ta := TouchArea { clicked => { root.clicked(); } }
 }
@@ -158,6 +160,8 @@ component NavButton inherits Rectangle {
     callback clicked();
     min-height: 44px; border-radius: 10px;
     background: root.active ? Theme.acc.with-alpha(0.22) : (ta.has-hover ? Theme.card : transparent);
+    border-width: nfs.has-focus ? 2px : 0px; border-color: Theme.acc;
+    nfs := FocusScope { key-pressed(e) => { if (e.text == Key.Return || e.text == " ") { root.clicked(); return accept; } reject } }
     Text {
         text: root.text; color: root.active ? Theme.acc : Theme.fg; font-weight: 700; font-size: root.vertical ? 14px : 11px; overflow: elide;
         horizontal-alignment: root.vertical ? TextHorizontalAlignment.left : TextHorizontalAlignment.center;
@@ -174,6 +178,8 @@ component EventRow inherits Rectangle {
     height: 92px;
     Rectangle {
         y: 4px; height: parent.height - 8px; background: Theme.card; border-radius: 8px; clip: true;
+        border-width: efs.has-focus ? 2px : 0px; border-color: Theme.acc;
+        efs := FocusScope { key-pressed(e) => { if (e.text == Key.Return) { root.open(); return accept; } reject } }
         TouchArea { clicked => { root.open(); } }
         HorizontalLayout {
             padding: 10px; spacing: 10px;
@@ -512,6 +518,15 @@ export component MainWindow inherits Window {
                             Rectangle {
                                 y: 4px; x: 8px; width: parent.width - 16px; height: parent.height - 8px;
                                 background: Theme.card; border-radius: 10px; clip: true;
+                                border-width: rfs.has-focus ? 2px : 0px; border-color: Theme.acc;
+                                // keyboard / remote: Enter plays, Right opens the channel's guide
+                                rfs := FocusScope {
+                                    key-pressed(e) => {
+                                        if (e.text == Key.Return) { root.play(ch.uuid); return accept; }
+                                        if (e.text == Key.RightArrow) { root.open-channel(ch.uuid); return accept; }
+                                        reject
+                                    }
+                                }
                                 HorizontalLayout {
                                     padding: 10px; spacing: 12px;
                                     // the logo plays the channel
@@ -631,6 +646,8 @@ export component MainWindow inherits Window {
                                         x: ev.x; y: 3px; width: ev.w; height: 50px; border-radius: 6px; clip: true;
                                         background: ev-ta.has-hover ? Theme.card-hi : (ev.live ? Theme.card-hi.with-alpha(0.7) : Theme.card);
                                         border-width: ev.rec ? 2px : (ev.live ? 1px : 0px); border-color: ev.rec ? Theme.c-bad : Theme.acc;
+                                        if cfs2.has-focus: Rectangle { border-width: 2px; border-color: Theme.fg; border-radius: 6px; }
+                                        cfs2 := FocusScope { key-pressed(e) => { if (e.text == Key.Return) { root.event-clicked(ev.id); return accept; } reject } }
                                         Text { x: 6px; width: parent.width - 10px; text: ev.title; color: Theme.fg; font-size: 12px; vertical-alignment: center; overflow: elide; horizontal-alignment: ev.rtl ? TextHorizontalAlignment.right : TextHorizontalAlignment.left; }
                                         ev-ta := TouchArea { clicked => { root.event-clicked(ev.id); } }
                                     }
