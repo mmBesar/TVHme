@@ -172,11 +172,12 @@ fn parse_params(s: &str) -> Vec<(String, String)> {
 fn now() -> i64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64 }
 
 /// (id, channel uuid, title, summary, start offset, stop offset) relative to now.
-const EVENTS: [(u32, &str, &str, &str, i64, i64); 4] = [
+const EVENTS: [(u32, &str, &str, &str, i64, i64); 5] = [
     (1, "uuid-two", "Evening News", "Headlines of the day", -1800, 1800),
     (2, "uuid-two", "Late Movie", "A film about tuners", 1800, 9000),
     (3, "uuid-one", "Morning Show", "Coffee and chat", 3600, 7200),
     (4, "uuid-three", "Nature Documentary", "Birds of the delta", 600, 4200),
+    (5, "uuid-three", "نشرة الأخبار", "ملخص اليوم", 4200, 7200),
 ];
 
 fn channel_name(uuid: &str) -> &'static str { CHANNELS.iter().find(|c| c.0 == uuid).map(|c| c.2).unwrap_or("") }
@@ -228,7 +229,7 @@ async fn http_conn(mut stream: TcpStream, webroot: String, state: Shared) {
             let rec = st.recs.iter().find(|r| r.event_id == e.0);
             let dvr = rec.map(|r| format!(",\"dvrUuid\":\"{}\",\"dvrState\":\"{}\"", r.uuid, r.state)).unwrap_or_default();
             format!("{{\"eventId\":{},\"channelUuid\":\"{}\",\"channelName\":\"{}\",\"start\":{},\"stop\":{},\"title\":\"{}\",\"summary\":\"{}\",\"description\":\"Longer text about {}\"{}{}}}",
-                e.0, e.1, channel_name(e.1), n + e.4, n + e.5, e.2, e.3, e.2, if e.0 == 1 { ",\"image\":\"imagecache/1\"" } else { "" }, dvr)
+                e.0, e.1, channel_name(e.1), n + e.4, n + e.5, e.2, e.3, e.2, if e.0 == 1 { ",\"image\":\"imagecache/1\",\"subtitle\":\"Pilot\",\"seasonNumber\":2,\"episodeNumber\":5,\"copyright_year\":2019,\"category\":[\"News\",\"Weather\"],\"credits\":{\"Jane Roe\":\"director\",\"A B\":\"actor\"},\"starRating\":75,\"ageRating\":12" } else { "" }, dvr)
         };
         let rec_json = |r: &Rec| format!("{{\"uuid\":\"{}\",\"channelname\":\"{}\",\"disp_title\":\"{}\",\"disp_subtitle\":\"\",\"disp_description\":\"\",\"start\":{},\"stop\":{},\"status\":\"{}\",\"sched_status\":\"{}\",\"filesize\":0,\"errors\":0,\"enabled\":true}}",
             r.uuid, channel_name(&r.channel), r.title, r.start, r.stop, r.state, r.state);

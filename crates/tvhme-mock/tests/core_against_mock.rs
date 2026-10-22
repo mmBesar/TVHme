@@ -250,3 +250,16 @@ async fn events_carry_description_and_picture() {
     assert!(ev.iter().find(|e| e.title == "Late Movie").unwrap().image.is_none());
     assert_eq!(s.api.image(news.image.as_ref().unwrap()).await.unwrap(), tvhme_mock::LOGO_PNG);
 }
+
+#[tokio::test]
+async fn events_carry_episode_facts_and_credits() {
+    let m = tvhme_mock::spawn().await;
+    let s = Session::connect(opts(addr(&m), "user", "user", None)).await.unwrap();
+    let news = s.api.epg_search("news", false, 10).await.unwrap().into_iter().find(|e| e.title == "Evening News").unwrap();
+    assert_eq!(news.subtitle, "Pilot");
+    assert_eq!(news.episode, "S02E05");
+    assert_eq!(news.facts, "2019 · News, Weather · ★ 7.5 · 12+");
+    assert_eq!(news.credits, "Director: Jane Roe  ·  Cast: A B");
+    let plain = s.api.epg_search("movie", false, 10).await.unwrap();
+    assert!(plain[0].episode.is_empty() && plain[0].facts.is_empty() && plain[0].credits.is_empty());
+}

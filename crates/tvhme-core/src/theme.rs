@@ -16,7 +16,7 @@ pub enum ThemeChoice {
     /// Catppuccin palette. `amoled` swaps backgrounds for true black (Latte uses Mocha as its dark base).
     Catppuccin { flavor: Flavor, accent: Accent, amoled: bool },
     /// Native look: on Android follows the system light/dark setting through Slint's native style.
-    System,
+    System { accent: Accent },
 }
 
 impl Default for ThemeChoice {
@@ -24,6 +24,9 @@ impl Default for ThemeChoice {
 }
 
 impl Accent {
+    /// The accent as (dark-scheme, light-scheme) colours, for the System style
+    /// where only the accent is ours and the rest follows the device.
+    pub fn pair(self) -> (u32, u32) { (d::MOCHA[self as usize], d::LATTE[self as usize]) }
     pub const ALL: [Accent; 14] = [
         Accent::Rosewater, Accent::Flamingo, Accent::Pink, Accent::Mauve, Accent::Red, Accent::Maroon, Accent::Peach,
         Accent::Yellow, Accent::Green, Accent::Teal, Accent::Sky, Accent::Sapphire, Accent::Blue, Accent::Lavender,
@@ -105,7 +108,8 @@ mod tests {
         let l = ThemeChoice::Catppuccin { flavor: Flavor::Latte, accent: Accent::Mauve, amoled: false }.colors().unwrap();
         assert!(!l.dark);
         assert_eq!(l.accent, 0x8839ef);
-        assert!(ThemeChoice::System.colors().is_none());
+        assert!(ThemeChoice::System { accent: Accent::Teal }.colors().is_none());
+        assert_eq!(Accent::Mauve.pair(), (0xcba6f7, 0x8839ef));
     }
     #[test]
     fn all_accents_have_names() {

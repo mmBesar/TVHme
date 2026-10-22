@@ -111,7 +111,14 @@ fn col(c: u32) -> Color { Color::from_rgb_u8((c >> 16) as u8, (c >> 8) as u8, c 
 pub fn apply_theme(ui: &MainWindow, choice: ThemeChoice) {
     let t = ui.global::<Theme>();
     match choice.colors() {
-        None => { t.set_use_system(true); }
+        None => {
+            t.set_use_system(true);
+            if let ThemeChoice::System { accent } = choice {
+                let (d, l) = accent.pair();
+                t.set_accent_dark(col(d));
+                t.set_accent_light(col(l));
+            }
+        }
         Some(c) => {
             t.set_use_system(false);
             t.set_dark(c.dark);
@@ -130,10 +137,11 @@ pub fn apply_theme(ui: &MainWindow, choice: ThemeChoice) {
 }
 
 pub fn choice_from_indices(flavor: i32, accent: i32, mode: i32) -> ThemeChoice {
-    if mode == 2 { return ThemeChoice::System; }
+    let accent = Accent::ALL[(accent.clamp(0, 13)) as usize];
+    if mode == 2 { return ThemeChoice::System { accent }; }
     ThemeChoice::Catppuccin {
         flavor: Flavor::ALL[(flavor.clamp(0, 3)) as usize],
-        accent: Accent::ALL[(accent.clamp(0, 13)) as usize],
+        accent,
         amoled: mode == 1,
     }
 }
@@ -174,7 +182,20 @@ fn event_items(evs: &[Event]) -> Vec<EventItem> {
         logo: logo_for(&e.channel_uuid).0, has_logo: logo_for(&e.channel_uuid).1, initials: initials(&e.channel_name).into(),
         description: e.description.clone().into(), channel_uuid: e.channel_uuid.clone().into(),
         poster: Image::default(), has_poster: false,
+        subtitle: e.subtitle.clone().into(), episode: e.episode.clone().into(),
+        facts: e.facts.clone().into(), credits: e.credits.clone().into(),
+        rtl: is_rtl(&e.title) || is_rtl(&e.summary),
     }).collect()
+}
+
+/// True when the text's first strong letter is from a right-to-left script (Arabic, Hebrew, Syriac, Thaana, N'Ko...).
+pub fn is_rtl(s: &str) -> bool {
+    for c in s.chars() {
+        let u = c as u32;
+        if matches!(u, 0x0590..=0x08FF | 0xFB1D..=0xFDFF | 0xFE70..=0xFEFF) { return true; }
+        if c.is_alphabetic() { return false; }
+    }
+    false
 }
 
 fn matches_filter(c: &tvhme_core::api::Channel, filter: &str) -> bool {
@@ -290,7 +311,7 @@ fn tl_events(evs: &[Event], t0: i64, now: i64) -> Vec<TlEvent> {
             id: e.id as i32, title: e.title.clone().into(),
             x: ((s - t0) as f32 / 60.0) * PX_PER_MIN,
             w: (((en - s) as f32 / 60.0) * PX_PER_MIN - 2.0).max(6.0),
-            live: e.start <= now && now < e.stop, rec: e.dvr_state.is_some(),
+            live: e.start <= now && now < e.stop, rec: e.dvr_state.is_some(), rtl: is_rtl(&e.title),
         }
     }).collect()
 }
@@ -932,8 +953,16 @@ fn android_main(app: slint::android::AndroidApp) {
 mod tests {
     use super::*;
     fn ev(id: u32, start: i64, stop: i64, title: &str) -> Event {
-        Event { id, channel_uuid: "c".into(), channel_name: "C".into(), start, stop, title: title.into(), summary: String::new(),
-                description: String::new(), image: None, dvr_uuid: None, dvr_state: None }
+        Event { id, channel_uuid: "c".into(), channel_name: "C".into(), start, stop, title: title.into(), ..Default::default() }
+    }
+    #[test]
+    fn rtl_detection_uses_first_letter() {
+        assert!(is_rtl("نشرة الأخبار"));
+        assert!(is_rtl("12:00 نشرة"));
+        assert!(is_rtl("שלום"));
+        assert!(!is_rtl("News"));
+        assert!(!is_rtl("News نشرة"));
+        assert!(!is_rtl(""));
     }
     #[test]
     fn now_and_next_from_a_channels_events() {
@@ -955,7 +984,7 @@ mod tests {
     fn theme_indices_map_correctly() {
         assert_eq!(choice_from_indices(2, 3, 0), ThemeChoice::default());
         assert_eq!(choice_from_indices(3, 12, 1), ThemeChoice::Catppuccin { flavor: Flavor::Mocha, accent: Accent::Blue, amoled: true });
-        assert_eq!(choice_from_indices(0, 0, 2), ThemeChoice::System);
+        assert_eq!(choice_from_indices(0, 0, 2), ThemeChoice::System { accent: Accent::Rosewater });
         assert_eq!(choice_from_indices(99, -4, 0), ThemeChoice::Catppuccin { flavor: Flavor::Mocha, accent: Accent::Rosewater, amoled: false });
     }
 }

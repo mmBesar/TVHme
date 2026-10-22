@@ -69,7 +69,7 @@ pub struct Channel {
 pub struct Tag { pub uuid: String, pub name: String, pub index: i64 }
 
 /// One EPG event from `epg/events/grid`.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct Event {
     pub id: u32,
     pub channel_uuid: String,
@@ -82,6 +82,14 @@ pub struct Event {
     pub description: String,
     /// Picture for the programme (`imagecache/<id>` or a URL), when the server has one.
     pub image: Option<String>,
+    /// Episode title (`subtitle`), e.g. "The One With the Pilot". Empty when unknown.
+    pub subtitle: String,
+    /// Episode label such as "S02E05" (from `episodeOnscreen` or the season/episode numbers).
+    pub episode: String,
+    /// One line of facts: year, categories, ratings. Empty when the server has none.
+    pub facts: String,
+    /// One line of credits: directors, actors... Empty when the server has none.
+    pub credits: String,
     /// Set when this event is scheduled/recording/recorded (`dvrUuid`, `dvrState`).
     pub dvr_uuid: Option<String>,
     pub dvr_state: Option<String>,
@@ -175,6 +183,46 @@ struct RawTag {
     #[serde(default)] enabled: Option<bool>,
 }
 
+/// "S02E05" from the broadcaster's own text if there is one, else from the numbers.
+fn episode_label(onscreen: &str, season: Option<u32>, episode: Option<u32>) -> String {
+    let t = onscreen.trim();
+    if !t.is_empty() { return t.to_string(); }
+    match (season.filter(|n| *n > 0), episode.filter(|n| *n > 0)) {
+        (Some(s), Some(e)) => format!("S{s:02}E{e:02}"),
+        (None, Some(e)) => format!("E{e}"),
+        (Some(s), None) => format!("S{s:02}"),
+        _ => String::new(),
+    }
+}
+
+fn facts_line(year: Option<u32>, categories: &[String], stars: Option<u32>, age: Option<u32>) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(y) = year.filter(|y| *y > 0) { parts.push(y.to_string()); }
+    let cats: Vec<&str> = categories.iter().map(|c| c.trim()).filter(|c| !c.is_empty()).collect();
+    if !cats.is_empty() { parts.push(cats.join(", ")); }
+    if let Some(s) = stars.filter(|s| *s > 0) { parts.push(format!("★ {:.1}", s as f32 / 10.0)); }
+    if let Some(a) = age.filter(|a| *a > 0) { parts.push(format!("{a}+")); }
+    parts.join(" · ")
+}
+
+/// Tvheadend sends credits as `{"Some Name": "actor", ...}`; group the names by role.
+fn credits_line(v: Option<&serde_json::Value>) -> String {
+    let Some(obj) = v.and_then(|v| v.as_object()) else { return String::new() };
+    let mut roles: Vec<(String, Vec<String>)> = Vec::new();
+    for (name, role) in obj {
+        let role = role.as_str().unwrap_or("").trim();
+        let role = if role.is_empty() { "cast" } else { role };
+        let label = match role { "director" => "Director", "actor" => "Cast", "presenter" => "Presenter", "writer" => "Writer", "producer" => "Producer", r => r };
+        match roles.iter_mut().find(|(l, _)| l == label) {
+            Some((_, v)) => v.push(name.clone()),
+            None => roles.push((label.to_string(), vec![name.clone()])),
+        }
+    }
+    let order = ["Director", "Writer", "Presenter", "Cast", "Producer"];
+    roles.sort_by_key(|(l, _)| order.iter().position(|o| o == l).unwrap_or(order.len()));
+    roles.iter().map(|(l, n)| format!("{l}: {}", n.iter().take(6).cloned().collect::<Vec<_>>().join(", "))).collect::<Vec<_>>().join("  ·  ")
+}
+
 #[derive(Deserialize, Default)]
 #[serde(default)]
 struct RawFullEvent {
@@ -187,6 +235,15 @@ struct RawFullEvent {
     summary: String,
     description: String,
     image: Option<String>,
+    subtitle: String,
+    #[serde(rename = "episodeOnscreen")] episode_onscreen: String,
+    #[serde(rename = "seasonNumber")] season_number: Option<u32>,
+    #[serde(rename = "episodeNumber")] episode_number: Option<u32>,
+    copyright_year: Option<u32>,
+    category: Vec<String>,
+    credits: Option<serde_json::Value>,
+    #[serde(rename = "starRating")] star_rating: Option<u32>,
+    #[serde(rename = "ageRating")] age_rating: Option<u32>,
     #[serde(rename = "dvrUuid")] dvr_uuid: Option<String>,
     #[serde(rename = "dvrState")] dvr_state: Option<String>,
 }
@@ -401,6 +458,10 @@ impl Api {
 
     fn events(g: Grid<RawFullEvent>) -> Vec<Event> {
         g.entries.into_iter().map(|e| Event {
+            subtitle: e.subtitle.clone(),
+            episode: episode_label(&e.episode_onscreen, e.season_number, e.episode_number),
+            facts: facts_line(e.copyright_year, &e.category, e.star_rating, e.age_rating),
+            credits: credits_line(e.credits.as_ref()),
             id: e.event_id, channel_uuid: e.channel_uuid, channel_name: e.channel_name, start: e.start, stop: e.stop,
             title: e.title,
             summary: if e.summary.is_empty() { e.description.clone() } else { e.summary },
@@ -471,6 +532,17 @@ impl Api {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn episode_facts_and_credits_lines() {
+        use super::*;
+        assert_eq!(episode_label("", Some(2), Some(5)), "S02E05");
+        assert_eq!(episode_label("Ep. 7", Some(1), Some(1)), "Ep. 7");
+        assert_eq!(episode_label("", None, None), "");
+        assert_eq!(facts_line(Some(2019), &["Drama".into(), "Crime".into()], Some(75), Some(12)), "2019 · Drama, Crime · ★ 7.5 · 12+");
+        let v = serde_json::json!({"Jane Roe": "director", "A B": "actor", "C D": "actor"});
+        assert_eq!(credits_line(Some(&v)), "Director: Jane Roe  ·  Cast: A B, C D");
+        assert_eq!(credits_line(None), "");
+    }
     use super::*;
     #[test]
     fn forbidden_is_explained_as_account_rights() {
