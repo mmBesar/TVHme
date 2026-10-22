@@ -3,6 +3,8 @@ slint::include_modules!();
 mod config;
 mod fmt;
 mod player;
+#[cfg(not(target_os = "android"))]
+mod integrate;
 
 use slint::{Color, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, VecModel};
 use std::cell::RefCell;
@@ -576,6 +578,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
     // The window's app id must match the .desktop file name (tvhme.desktop), or the bar/dock cannot find the icon.
     #[cfg(not(target_os = "android"))]
     let _ = slint::set_xdg_app_id("tvhme");
+    #[cfg(not(target_os = "android"))]
+    integrate::ensure();
     let ui = MainWindow::new()?;
     // Fallback in case the Android backend reports no safe-area inset: keep content below the status bar.
     #[cfg(target_os = "android")]
