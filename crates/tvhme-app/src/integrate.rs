@@ -2,7 +2,9 @@
 //! `tvhme --install-launcher`): a launcher entry and the icon in all sizes in the user's own folders.
 //! Nothing here runs on its own. A portable AppImage stays portable until the person decides otherwise.
 
-const ICONS: [(u32, &[u8]); 6] = [
+const ICONS: [(u32, &[u8]); 8] = [
+    (16, include_bytes!("../../../assets/icons/16x16.png")),
+    (24, include_bytes!("../../../assets/icons/24x24.png")),
     (32, include_bytes!("../../../assets/icons/32x32.png")),
     (48, include_bytes!("../../../assets/icons/48x48.png")),
     (64, include_bytes!("../../../assets/icons/64x64.png")),

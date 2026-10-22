@@ -577,10 +577,11 @@ fn start_playback(w: slint::Weak<MainWindow>, session: Shared, slot: Slot, targe
 pub fn run() -> Result<(), slint::PlatformError> {
     #[cfg(not(target_os = "android"))]
     if let Some(code) = integrate::cli() { std::process::exit(code); }
-    // The window's app id must match the .desktop file name (tvhme.desktop), or the bar/dock cannot find the icon.
-    #[cfg(not(target_os = "android"))]
-    let _ = slint::set_xdg_app_id("tvhme");
     let ui = MainWindow::new()?;
+    // The window's app id must match the .desktop file name (tvhme.desktop), or the bar/dock cannot find the icon.
+    // It only takes effect when set after the window exists and before it is shown (Slint ignores it earlier).
+    #[cfg(not(target_os = "android"))]
+    if let Err(e) = slint::set_xdg_app_id("tvhme") { eprintln!("could not set the app id: {e}"); }
     // Fallback in case the Android backend reports no safe-area inset: keep content below the status bar.
     #[cfg(target_os = "android")]
     ui.set_extra_top(28.0);

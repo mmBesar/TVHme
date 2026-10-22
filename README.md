@@ -18,12 +18,13 @@ Status: early development.
 
 Or add `inputs.tvhme.url = "github:mmBesar/TVHme";` to your flake and use `inputs.tvhme.packages.${system}.default`.
 
-**Other Linux:** download the AppImage (`TVHme-x86_64.AppImage` or `TVHme-aarch64.AppImage`) or the `tvhme-linux-<arch>.tar.gz` from the Releases page. Needs mpv (or VLC) for playback. RISC-V (`riscv64`) is offered as a tar.gz.
+**Other Linux:** download the AppImage (`TVHme-x86_64.AppImage` or `TVHme-aarch64.AppImage`) or the `tvhme-linux-<arch>.tar.gz` from the Releases page. Needs mpv (or VLC) for playback. RISC-V (`riscv64`) is a tar.gz built on request.
 
 - **AppImage:** `chmod +x` and run. It is portable: it does not touch your system, so a loose AppImage has no menu entry or bar icon (that is how AppImages work everywhere). If you want one, either use an AppImage manager (AppImageLauncher, Gear Lever, ...) or press **Settings > App menu > Add to app menu**, or run `./TVHme-x86_64.AppImage --install-launcher` (undo with `--uninstall-launcher`). This only adds files under `~/.local/share` for your user.
+- **Fedora (44 and later):** download `tvhme-<version>-1.fc44.x86_64.rpm` or `...aarch64.rpm` and run `sudo dnf install ./tvhme-*.rpm`. It gives you the menu entry, icons and `tvhme` command like any other package.
 - **tar.gz:** unpack and run `./install.sh` (installs under `~/.local`, undo with `./install.sh --uninstall`).
 
-**Android:** download the APK from the Releases page: `arm64-v8a` for modern phones, `armeabi-v7a` for 32-bit ones, and the `android6` builds for Android 6 (experimental, only published when they build).
+**Android:** download the APK from the Releases page: `arm64-v8a` for modern phones, `armeabi-v7a` for 32-bit ones. The minimum is Android 8 (API 26): the Skia renderer that Slint uses on Android is built for that level.
 
 ## Develop
 

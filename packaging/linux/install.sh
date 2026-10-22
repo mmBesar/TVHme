@@ -5,7 +5,7 @@ set -e
 here="$(cd "$(dirname "$0")" && pwd)"
 bin="${XDG_BIN_HOME:-$HOME/.local/bin}"
 data="${XDG_DATA_HOME:-$HOME/.local/share}"
-sizes="32 48 64 128 256 512"
+sizes="16 24 32 48 64 128 256 512"
 if [ "$1" = "--uninstall" ]; then
   rm -f "$bin/tvhme" "$data/applications/tvhme.desktop" "$data/icons/hicolor/scalable/apps/tvhme.svg"
   for s in $sizes; do rm -f "$data/icons/hicolor/${s}x${s}/apps/tvhme.png"; done

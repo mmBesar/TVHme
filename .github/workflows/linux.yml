@@ -52,7 +52,7 @@ jobs:
           cp packaging/linux/tvhme.desktop AppDir/tvhme.desktop
           cp assets/icons/512x512.png AppDir/tvhme.png
           cp AppDir/tvhme.png AppDir/.DirIcon
-          for s in 32 48 64 128 256 512; do
+          for s in 16 24 32 48 64 128 256 512; do
             mkdir -p AppDir/usr/share/icons/hicolor/${s}x${s}/apps && cp assets/icons/${s}x${s}.png AppDir/usr/share/icons/hicolor/${s}x${s}/apps/tvhme.png
           done
           mkdir -p AppDir/usr/share/icons/hicolor/scalable/apps && cp assets/icon.svg AppDir/usr/share/icons/hicolor/scalable/apps/tvhme.svg
@@ -76,14 +76,19 @@ jobs:
             TVHme-${{ matrix.appimage_arch }}.AppImage
 
   # RISC-V has no GitHub-hosted runner. This uses the free RISE runners, which need the
-  # "RISE RISC-V Runners" GitHub App installed on the repository (see README). Without it the job
-  # just waits and is cancelled after the timeout; the other builds are not affected.
+  # "RISE RISC-V Runners" GitHub App installed on the repository (see README).
+  # It is slow (a native RISC-V build takes a long time), so it only runs when started by hand
+  # (Actions > Linux > Run workflow).
   build-riscv64:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04-riscv
-    timeout-minutes: 90
+    timeout-minutes: 180
     continue-on-error: true
     steps:
       - uses: actions/checkout@v6
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: riscv64
       - name: Rust toolchain
         run: |
           command -v rustup >/dev/null && rustup update stable --no-self-update || true
@@ -113,3 +118,42 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: tvhme-linux-riscv64.tar.gz
+
+  # Fedora packages, built inside a Fedora 44 container on native amd64 and arm64 runners.
+  # (A package built on Fedora 44 installs on 44 and later.)
+  rpm:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    container: fedora:44
+    steps:
+      - name: Tools and libraries
+        run: |
+          dnf -y install git rust cargo gcc gcc-c++ rpm-build fontconfig-devel libxkbcommon-devel libxkbcommon-x11-devel wayland-devel libxcb-devel mesa-libGL-devel file
+      - uses: actions/checkout@v6
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: fedora44-${{ matrix.arch }}
+      - name: Build app
+        run: cargo build --release -p tvhme-app --bin tvhme
+      - name: Build RPM
+        run: |
+          VERSION=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          rpmbuild -bb --define "_topdir $PWD/rpmbuild" --define "srcroot $PWD" --define "pkgversion $VERSION" packaging/linux/tvhme.spec
+          mkdir -p dist-rpm && cp rpmbuild/RPMS/*/*.rpm dist-rpm/
+          ls -la dist-rpm
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tvhme-rpm-${{ matrix.arch }}
+          path: dist-rpm/*.rpm
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist-rpm/*.rpm
