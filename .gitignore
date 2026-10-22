@@ -8,3 +8,8 @@ local.properties
 /notes/
 docs/VERIFICATION.md
 *.bundle
+
+# Signing keys must never be committed
+*.jks
+*.keystore
+*.p12

@@ -1,19 +1,31 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- TVHme icon in the app's own colours: Catppuccin Macchiato base, Mauve to Sapphire frame, Peach play button -->
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1e3a8a"/>
-      <stop offset="1" stop-color="#0b1f5c"/>
+      <stop offset="0" stop-color="#3b4068"/>
+      <stop offset="1" stop-color="#1b1d2e"/>
+    </linearGradient>
+    <linearGradient id="frame" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#d7b8ff"/>
+      <stop offset="1" stop-color="#7aa2f7"/>
+    </linearGradient>
+    <linearGradient id="play" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffc08f"/>
+      <stop offset="1" stop-color="#f58a4b"/>
     </linearGradient>
   </defs>
   <rect width="512" height="512" rx="112" fill="url(#bg)"/>
-  <!-- TV screen -->
-  <rect x="96" y="150" width="320" height="214" rx="32" fill="none" stroke="#ffffff" stroke-width="22"/>
-  <!-- antenna -->
-  <path d="M196 100 L256 150 L316 100" fill="none" stroke="#ffffff" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
-  <!-- play triangle -->
-  <path d="M230 214 L230 300 L304 257 Z" fill="#f97316"/>
-  <!-- signal bars -->
-  <rect x="150" y="400" width="26" height="30" rx="6" fill="#f97316"/>
-  <rect x="193" y="388" width="26" height="42" rx="6" fill="#f97316"/>
-  <rect x="236" y="376" width="26" height="54" rx="6" fill="#ffffff"/>
+  <g id="glyph">
+    <!-- antenna with peach tips -->
+    <path d="M256 150 L190 84 M256 150 L322 84" fill="none" stroke="url(#frame)" stroke-width="30" stroke-linecap="round"/>
+    <circle cx="190" cy="84" r="17" fill="#f5a97f"/>
+    <circle cx="322" cy="84" r="17" fill="#f5a97f"/>
+    <!-- screen: thick frame, dark glass -->
+    <rect x="70" y="150" width="372" height="256" rx="64" fill="url(#frame)"/>
+    <rect x="104" y="184" width="304" height="188" rx="38" fill="#1b1d2e"/>
+    <!-- play button -->
+    <path d="M222 220 L222 336 L318 278 Z" fill="url(#play)" stroke="url(#play)" stroke-width="22" stroke-linejoin="round"/>
+    <!-- stand -->
+    <path d="M168 448 H344" fill="none" stroke="url(#frame)" stroke-width="30" stroke-linecap="round"/>
+  </g>
 </svg>

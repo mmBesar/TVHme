@@ -39,7 +39,8 @@ jobs:
           mkdir -p dist
           cp target/release/tvhme dist/tvhme
           cp assets/icon.svg dist/tvhme.svg
-          cp packaging/linux/tvhme.desktop dist/
+          rsvg-convert -w 256 -h 256 assets/icon.svg -o dist/tvhme.png
+          cp packaging/linux/tvhme.desktop packaging/linux/install.sh dist/
           tar czf tvhme-linux-${{ matrix.arch }}.tar.gz -C dist .
       - name: Package AppImage
         env:
@@ -50,6 +51,8 @@ jobs:
           cp target/release/tvhme AppDir/usr/bin/tvhme
           cp packaging/linux/tvhme.desktop AppDir/tvhme.desktop
           rsvg-convert -w 512 -h 512 assets/icon.svg -o AppDir/tvhme.png
+          cp AppDir/tvhme.png AppDir/.DirIcon
+          mkdir -p AppDir/usr/share/icons/hicolor/scalable/apps && cp assets/icon.svg AppDir/usr/share/icons/hicolor/scalable/apps/tvhme.svg
           ln -s usr/bin/tvhme AppDir/AppRun
           curl -fsSL -o appimagetool "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${{ matrix.appimage_arch }}.AppImage"
           chmod +x appimagetool

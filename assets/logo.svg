@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 400"><defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b4068"/>
+      <stop offset="1" stop-color="#1b1d2e"/>
+    </linearGradient>
+    <linearGradient id="frame" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#d7b8ff"/>
+      <stop offset="1" stop-color="#7aa2f7"/>
+    </linearGradient>
+    <linearGradient id="play" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffc08f"/>
+      <stop offset="1" stop-color="#f58a4b"/>
+    </linearGradient>
+  </defs>
+<rect width="1280" height="400" fill="#24273a"/>
+<g transform="translate(60 44) scale(0.6)"><rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <g id="glyph">
+    <!-- antenna with peach tips -->
+    <path d="M256 150 L190 84 M256 150 L322 84" fill="none" stroke="url(#frame)" stroke-width="30" stroke-linecap="round"/>
+    <circle cx="190" cy="84" r="17" fill="#f5a97f"/>
+    <circle cx="322" cy="84" r="17" fill="#f5a97f"/>
+    <!-- screen: thick frame, dark glass -->
+    <rect x="70" y="150" width="372" height="256" rx="64" fill="url(#frame)"/>
+    <rect x="104" y="184" width="304" height="188" rx="38" fill="#1b1d2e"/>
+    <!-- play button -->
+    <path d="M222 220 L222 336 L318 278 Z" fill="url(#play)" stroke="url(#play)" stroke-width="22" stroke-linejoin="round"/>
+    <!-- stand -->
+    <path d="M168 448 H344" fill="none" stroke="url(#frame)" stroke-width="30" stroke-linecap="round"/>
+  </g>
+</g>
+<text x="420" y="238" font-family="Inter, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="150" font-weight="800" fill="#cad3f5" letter-spacing="-3">TVH<tspan fill="#f5a97f">me</tspan></text>
+<text x="424" y="300" font-family="Inter, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="42" font-weight="500" fill="#a5adcb">A native Tvheadend client</text>
+</svg>

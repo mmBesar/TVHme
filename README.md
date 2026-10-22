@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo.png" alt="TVHme" width="520"></p>
+
 # TVHme
 
 A modern Tvheadend client for Linux and Android. Rust core, Slint UI.

@@ -32,10 +32,13 @@ slint-build = "1.18"
 package = "io.github.mmbesar.tvhme"
 build_targets = ["aarch64-linux-android", "armv7-linux-androideabi", "x86_64-linux-android"]
 apk_name = "TVHme"
+# Launcher icon: PNGs for every screen density plus an adaptive icon (see android/res).
+resources = "../../android/res"
 
 [package.metadata.android.application]
 # Home servers are often plain http on the LAN; Android blocks that unless the app says it may.
 uses_cleartext_traffic = true
+icon = "@mipmap/ic_launcher"
 
 [package.metadata.android.sdk]
 min_sdk_version = 26
