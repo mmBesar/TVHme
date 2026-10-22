@@ -58,6 +58,11 @@ fn apply_now_next(row: &mut ChannelItem, evs: &[Event], t: i64, off: chrono::Fix
     row.now_progress = now.map(|e| ((t - e.start) as f32 / (e.stop - e.start).max(1) as f32).clamp(0.0, 1.0)).unwrap_or(0.0);
     row.next_title = next.map(|e| e.title.clone()).unwrap_or_default().into();
     row.next_time = next.map(|e| fmt::hm(e.start, off)).unwrap_or_default().into();
+    row.now_id = now.map_or(0, |e| e.id as i32);
+    row.next_id = next.map_or(0, |e| e.id as i32);
+    // so tapping NOW or NEXT can open the programme card
+    let shown: Vec<Event> = now.into_iter().chain(next).cloned().collect();
+    register(&shown);
 }
 
 fn register(evs: &[Event]) {
@@ -215,7 +220,7 @@ fn channel_items(s: &Session, tag: &str, filter: &str) -> Vec<ChannelItem> {
         let (logo, has_logo) = logo_for(&c.uuid);
         let mut row = ChannelItem {
             uuid: c.uuid.clone().into(), number: c.number as i32, name: c.name.clone().into(), logo, has_logo,
-            initials: initials(&c.name).into(), now_title: "".into(), now_progress: 0.0, next_title: "".into(), next_time: "".into(),
+            initials: initials(&c.name).into(), now_title: "".into(), now_progress: 0.0, next_title: "".into(), next_time: "".into(), now_id: 0, next_id: 0,
         };
         CHAN_EVENTS.with(|m| if let Some(e) = m.borrow().get(&c.uuid) { apply_now_next(&mut row, e, t, off); });
         row
@@ -441,9 +446,35 @@ static GEN: AtomicU64 = AtomicU64::new(1);
 
 enum Target { Channel(String), Recording(String) }
 
+/// Stop a running "record while watching" and say what was saved (applies the audio-language filter).
+#[cfg(not(target_os = "android"))]
+fn finish_local_recording(w: &slint::Weak<MainWindow>) {
+    let Some(path) = player::record_stop() else { return };
+    ui_do(w, |ui| { ui.set_recording_local(false); ui.set_play_note("".into()); });
+    let cfg = config::load();
+    let w = w.clone();
+    std::thread::spawn(move || {
+        let msg = player::finalize_recording(&path, &cfg.audio_langs, cfg.audio_only_preferred);
+        ui_do(&w, move |ui| ui.set_toast(msg.into()));
+    });
+}
+
+#[cfg(not(target_os = "android"))]
+fn start_local_recording(w: &slint::Weak<MainWindow>, dir: &str, title: &str) {
+    match player::record_start(dir, title) {
+        Ok(path) => {
+            let n = format!("Recording to {}", path.display());
+            ui_do(w, move |ui| { ui.set_recording_local(true); ui.set_play_note(n.into()); });
+        }
+        Err(e) => ui_do(w, move |ui| ui.set_toast(e.into())),
+    }
+}
+
 fn start_playback(w: slint::Weak<MainWindow>, session: Shared, slot: Slot, target: Target, title: String, choice: i32, record: bool) {
     rt().spawn(async move {
         let Some(s) = session.lock().await.clone() else { return };
+        #[cfg(target_os = "android")]
+        let _ = record; // saving on this device is desktop only
         let gen = GEN.fetch_add(1, Ordering::SeqCst);
         drop(slot.lock().unwrap().take()); // stop the previous player and subscription first
         {
@@ -456,19 +487,21 @@ fn start_playback(w: slint::Weak<MainWindow>, session: Shared, slot: Slot, targe
         { let d = format!("Sent to the player: {}", Session::describe_url(&url)); ui_do(&w, move |ui| ui.set_play_note(d.into())); }
 
         #[cfg(not(target_os = "android"))]
-        let record_to = if record && matches!(target, Target::Channel(_)) {
-            let stamp = chrono::Local::now().format("%Y-%m-%d %H-%M").to_string();
-            player::record_path(&title, &stamp)
-        } else { None };
-        let child = match player::spawn(&url, &title, choice, record_to.as_deref()) {
-            Ok(c) => {
-                if let Some(f) = &record_to {
-                    let n = format!("Recording to {}", f.display());
-                    ui_do(&w, move |ui| ui.set_play_note(n.into()));
+        let launched = {
+            let cfg = config::load();
+            // a recording that was running for the previous channel ends here
+            finish_local_recording(&w);
+            match player::play(&url, &title, choice, cfg.audio_langs.trim()) {
+                Ok(l) => {
+                    if record && matches!(target, Target::Channel(_)) {
+                        // give the player a moment to open the stream before asking it to save
+                        tokio::time::sleep(std::time::Duration::from_millis(900)).await;
+                        start_local_recording(&w, &cfg.record_dir, &title);
+                    }
+                    Some(l)
                 }
-                Some(c)
+                Err(e) => { ui_do(&w, move |ui| ui.set_play_note(e.into())); None }
             }
-            Err(e) => { ui_do(&w, move |ui| ui.set_play_note(e.into())); None }
         };
         #[cfg(target_os = "android")]
         {
@@ -504,21 +537,33 @@ fn start_playback(w: slint::Weak<MainWindow>, session: Shared, slot: Slot, targe
         }
 
         // When the player window is closed, release the signal/tuner (but not if a newer playback replaced us).
+        // mpv stays open while you change channels (the window is reused); Stop, or closing it, ends it.
         #[cfg(not(target_os = "android"))]
-        if let Some(mut child) = child {
+        if let Some(player::Launched::Spawned { mut child, mpv }) = launched {
             let (w, slot) = (w.clone(), slot.clone());
             tokio::spawn(async move {
                 let mut kill_rx = kill_rx;
-                tokio::select! {
-                    _ = child.wait() => {
-                        let mut g = slot.lock().unwrap();
-                        if g.as_ref().map(|p| p.gen) == Some(gen) {
-                            drop(g.take());
-                            drop(g);
-                            ui_do(&w, |ui| { ui.set_now_playing("".into()); ui.set_has_signal(false); ui.set_play_note("".into()); });
+                if mpv {
+                    let _ = child.wait().await;
+                    finish_local_recording(&w);
+                    player::forget();
+                    let mut g = slot.lock().unwrap();
+                    drop(g.take());
+                    drop(g);
+                    ui_do(&w, |ui| { ui.set_now_playing("".into()); ui.set_has_signal(false); ui.set_play_note("".into()); });
+                } else {
+                    // VLC cannot be controlled: it is closed when Stop is pressed or another channel starts
+                    tokio::select! {
+                        _ = child.wait() => {
+                            let mut g = slot.lock().unwrap();
+                            if g.as_ref().map(|p| p.gen) == Some(gen) {
+                                drop(g.take());
+                                drop(g);
+                                ui_do(&w, |ui| { ui.set_now_playing("".into()); ui.set_has_signal(false); ui.set_play_note("".into()); });
+                            }
                         }
+                        _ = &mut kill_rx => { let _ = child.kill().await; }
                     }
-                    _ = &mut kill_rx => { let _ = child.kill().await; } // Stop pressed, or another channel started
                 }
             });
         }
@@ -528,6 +573,9 @@ fn start_playback(w: slint::Weak<MainWindow>, session: Shared, slot: Slot, targe
 }
 
 pub fn run() -> Result<(), slint::PlatformError> {
+    // The window's app id must match the .desktop file name (tvhme.desktop), or the bar/dock cannot find the icon.
+    #[cfg(not(target_os = "android"))]
+    let _ = slint::set_xdg_app_id("tvhme");
     let ui = MainWindow::new()?;
     // Fallback in case the Android backend reports no safe-area inset: keep content below the status bar.
     #[cfg(target_os = "android")]
@@ -542,6 +590,9 @@ pub fn run() -> Result<(), slint::PlatformError> {
     ui.set_t_mode(saved.mode); ui.set_t_flavor(saved.flavor); ui.set_t_accent(saved.accent);
     ui.set_player(saved.player);
     ui.set_record_local(saved.record_local);
+    ui.set_record_dir(saved.record_dir.clone().into());
+    ui.set_audio_langs(saved.audio_langs.clone().into());
+    ui.set_audio_only_preferred(saved.audio_only_preferred);
     ui.set_can_record_local(cfg!(not(target_os = "android")));
     ui.set_player_names(ModelRc::new(VecModel::from(player::names().into_iter().map(slint::SharedString::from).collect::<Vec<_>>())));
     apply_theme(&ui, choice_from_indices(saved.flavor, saved.accent, saved.mode));
@@ -834,11 +885,35 @@ pub fn run() -> Result<(), slint::PlatformError> {
 
     ui.on_player_changed(|i| config::update(|c| c.player = i));
     ui.on_record_local_changed(|b| config::update(|c| c.record_local = b));
+    ui.on_record_dir_changed(|d| { let d = d.trim().to_string(); config::update(move |c| c.record_dir = d.clone()); });
+    ui.on_audio_langs_changed(|l| {
+        // keep it tidy: "ARA, eng ,," -> "ara,eng"
+        let l = l.split(',').map(|x| x.trim().to_lowercase()).filter(|x| !x.is_empty()).collect::<Vec<_>>().join(",");
+        config::update(move |c| c.audio_langs = l.clone());
+    });
+    ui.on_audio_only_preferred_changed(|b| config::update(|c| c.audio_only_preferred = b));
+    ui.on_toggle_local_record({
+        let w = ui.as_weak();
+        move || {
+            #[cfg(not(target_os = "android"))]
+            {
+                if player::is_recording() { finish_local_recording(&w); }
+                else if let Some(ui) = w.upgrade() {
+                    let title = ui.get_now_playing().to_string();
+                    start_local_recording(&w, &config::load().record_dir, &title);
+                }
+            }
+            #[cfg(target_os = "android")]
+            let _ = &w;
+        }
+    });
 
     ui.on_stop_playback({
         let (w, slot) = (ui.as_weak(), slot.clone());
         move || {
-            drop(slot.lock().unwrap().take()); // also closes the player we started
+            drop(slot.lock().unwrap().take()); // releases the tuner subscription
+            #[cfg(not(target_os = "android"))]
+            { finish_local_recording(&w); player::quit(); } // close the stream and the player; TVHme stays open
             if let Some(ui) = w.upgrade() { ui.set_now_playing("".into()); ui.set_has_signal(false); ui.set_play_note("".into()); }
         }
     });
@@ -847,6 +922,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
         let (w, session, slot) = (ui.as_weak(), session.clone(), slot.clone());
         move || {
             drop(slot.lock().unwrap().take());
+            #[cfg(not(target_os = "android"))]
+            { finish_local_recording(&w); player::quit(); }
             config::update(|c| { c.pass.clear(); c.auth_code.clear(); c.auto_login = false; });
             let (w, session) = (w.clone(), session.clone());
             rt().spawn(async move {
@@ -974,6 +1051,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
         }
     });
     let result = ui.run();
+    #[cfg(not(target_os = "android"))]
+    { let _ = player::record_stop(); player::quit(); } // do not leave an idle player window behind
     drop(ticker);
     result
 }

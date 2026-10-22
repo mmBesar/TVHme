@@ -182,9 +182,11 @@ impl Session {
                         }
                     });
                     let client = h.client.clone();
+                    // Dropping the watch usually happens on the UI thread, which has no runtime of its own
+                    let rt = tokio::runtime::Handle::current();
                     return SignalWatch { source: SignalSource::Htsp, rx, stop: Some(Box::new(move || {
                         task.abort();
-                        tokio::spawn(async move {
+                        rt.spawn(async move {
                             let mut f = Map::new();
                             f.insert("subscriptionId".into(), Value::S64(subscription_id as i64));
                             let _ = client.request("unsubscribe", f).await;

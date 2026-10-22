@@ -7,3 +7,4 @@ Exec=tvhme
 Icon=tvhme
 Terminal=false
 Categories=AudioVideo;Video;TV;Network;
+StartupWMClass=tvhme

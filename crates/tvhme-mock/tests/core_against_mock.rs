@@ -279,3 +279,13 @@ async fn admin_can_switch_channels_off_and_on() {
     // a normal account may not change channels
     assert!(matches!(u.api.set_channel_enabled("uuid-two", false).await, Err(ApiError::Status(403))));
 }
+
+#[tokio::test]
+async fn dropping_the_signal_watch_off_the_runtime_does_not_panic() {
+    // the app drops it on the UI thread (Stop button), which has no Tokio runtime
+    let m = tvhme_mock::spawn().await;
+    let s = Arc::new(Session::connect(opts(addr(&m), "user", "user", Some(m.htsp.port()))).await.unwrap());
+    let sw = s.watch_signal("uuid-two", 1).await;
+    assert_eq!(sw.source, SignalSource::Htsp);
+    std::thread::spawn(move || drop(sw)).join().expect("drop must not panic");
+}
