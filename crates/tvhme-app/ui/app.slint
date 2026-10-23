@@ -383,6 +383,7 @@ export component MainWindow inherits Window {
     in-out property <bool> audio-only-preferred: false;
     in-out property <bool> recording-local: false;
     in property <bool> can-integrate: false;
+    in property <string> logo-problems;
     in property <bool> launcher-installed: false;
     callback toggle-launcher();
     callback record-dir-changed(string);
@@ -824,6 +825,11 @@ export component MainWindow inherits Window {
                                         toggled => { root.audio-only-preferred-changed(root.audio-only-preferred); }
                                     }
                                 }
+                            }
+                            if root.logo-problems != "": VerticalLayout {
+                                padding: 20px; padding-top: 0px; spacing: 6px;
+                                Text { text: "Channel logos that could not be loaded"; color: Theme.fg; font-size: 18px; font-weight: 700; }
+                                Text { text: root.logo-problems; color: Theme.fg-dim; font-size: 12px; wrap: word-wrap; }
                             }
                             if root.can-integrate: VerticalLayout {
                                 padding: 20px; padding-top: 0px; spacing: 8px;

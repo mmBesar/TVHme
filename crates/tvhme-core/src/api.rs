@@ -187,6 +187,30 @@ struct RawTag {
     #[serde(default)] enabled: Option<bool>,
 }
 
+/// Where to fetch a picture from, and whether that is the Tvheadend server itself (then we log in).
+/// Anything under `imagecache/` is fetched through the address the person typed, whatever host the server
+/// reports for itself: behind a reverse proxy the server often names an address nobody outside can reach.
+pub(crate) fn image_url(addr: &ServerAddress, src: &str) -> Option<(String, bool)> {
+    if let Some(i) = src.find("imagecache/") {
+        return Some((addr.url(&format!("/{}", &src[i..])), true));
+    }
+    if src.starts_with("http://") || src.starts_with("https://") { return Some((src.to_string(), false)); }
+    None
+}
+
+/// The address a server redirected us to, when it is the same host (http to https upgrade, a proxy moving
+/// the webroot...). `location` is the redirect's `Location`, `asked` the path that was requested.
+pub(crate) fn upgraded_address(addr: &ServerAddress, location: &str, asked: &str) -> Option<ServerAddress> {
+    let url = reqwest::Url::parse(location).ok()?;
+    let host = url.host_str()?;
+    if !host.eq_ignore_ascii_case(&addr.host) { return None; }
+    let tls = match url.scheme() { "http" => false, "https" => true, _ => return None };
+    let port = url.port().unwrap_or(if tls { 443 } else { 80 });
+    let path = url.path();
+    let webroot = path.strip_suffix(asked)?.trim_end_matches('/').to_string();
+    Some(ServerAddress { tls, host: addr.host.clone(), port, webroot })
+}
+
 /// "S02E05" from the broadcaster's own text if there is one, else from the numbers.
 fn episode_label(onscreen: &str, season: Option<u32>, episode: Option<u32>) -> String {
     let t = onscreen.trim();
@@ -321,6 +345,20 @@ impl Api {
         Ok(Api { http, http_noredir, addr, user: user.into(), pass: pass.into(), auth: String::new() })
     }
 
+    /// Typing `http://tv.example.com` in front of a server that sends everything to https makes the login
+    /// fail (a redirect to another port drops the password). Ask once, without credentials, where the
+    /// server really lives and use that address instead.
+    pub async fn follow_upgrade(addr: ServerAddress, insecure_tls: bool) -> ServerAddress {
+        const ASKED: &str = "/api/serverinfo";
+        let Ok(client) = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(5)).timeout(Duration::from_secs(8))
+            .redirect(reqwest::redirect::Policy::none()).no_proxy().danger_accept_invalid_certs(insecure_tls).build() else { return addr };
+        let Ok(r) = client.get(addr.url(ASKED)).send().await else { return addr };
+        if !r.status().is_redirection() { return addr; }
+        let Some(loc) = r.headers().get(reqwest::header::LOCATION).and_then(|v| v.to_str().ok()) else { return addr };
+        upgraded_address(&addr, loc, ASKED).unwrap_or(addr)
+    }
+
     /// Use the server's persistent authentication code (`?auth=`) instead of a password where possible.
     pub fn with_auth_code(mut self, code: &str) -> Api { self.auth = code.trim().into(); self }
     pub fn has_auth_code(&self) -> bool { !self.auth.is_empty() }
@@ -392,11 +430,9 @@ impl Api {
     /// `imagecache/<id>` path (fetched with the account's login), or a full http(s) URL (the login is only
     /// sent when it points at the Tvheadend server itself). Capped at 4 MB.
     pub async fn image(&self, src: &str) -> Result<Vec<u8>, ApiError> {
-        let url = if src.starts_with("http://") || src.starts_with("https://") { src.to_string() }
-            else if src.contains("imagecache/") { self.addr.url(&format!("/{}", src.trim_start_matches('/'))) }
-            else { return Err(ApiError::BadResponse("unsupported image source".into())) };
+        let Some((url, ours)) = image_url(&self.addr, src) else { return Err(ApiError::BadResponse("unsupported image source".into())) };
         let mut req = self.http.get(&url);
-        if url.starts_with(&self.addr.base_url()) {
+        if ours {
             if !self.user.is_empty() { req = req.basic_auth(&self.user, Some(&self.pass)); }
             else if self.has_auth_code() { req = req.query(&[("auth", self.auth.as_str())]); }
         }
@@ -552,6 +588,25 @@ impl Api {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn images_come_through_the_typed_address() {
+        let a = ServerAddress::parse("https://tv.example.com").unwrap();
+        assert_eq!(image_url(&a, "imagecache/12"), Some(("https://tv.example.com/imagecache/12".into(), true)));
+        // the server names an address that only works inside its own network: ignored
+        assert_eq!(image_url(&a, "http://tvh:9981/imagecache/12"), Some(("https://tv.example.com/imagecache/12".into(), true)));
+        assert_eq!(image_url(&a, "https://pics.example.org/a.png"), Some(("https://pics.example.org/a.png".into(), false)));
+        assert_eq!(image_url(&a, "logo.png"), None);
+    }
+    #[test]
+    fn redirect_to_the_same_host_is_followed() {
+        let a = ServerAddress::parse("http://tv.example.com").unwrap();
+        let up = upgraded_address(&a, "https://tv.example.com/api/serverinfo", "/api/serverinfo").unwrap();
+        assert!(up.tls && up.port == 443 && up.webroot.is_empty() && up.host == "tv.example.com");
+        let moved = upgraded_address(&a, "https://tv.example.com:8443/tvh/api/serverinfo", "/api/serverinfo").unwrap();
+        assert!(moved.port == 8443 && moved.webroot == "/tvh");
+        assert!(upgraded_address(&a, "https://evil.example.net/api/serverinfo", "/api/serverinfo").is_none());
+        assert!(upgraded_address(&a, "https://tv.example.com/login", "/api/serverinfo").is_none());
+    }
     #[test]
     fn episode_facts_and_credits_lines() {
         use super::*;

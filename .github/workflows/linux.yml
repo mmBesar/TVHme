@@ -82,7 +82,7 @@ jobs:
   build-riscv64:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04-riscv
-    timeout-minutes: 180
+    timeout-minutes: 300
     continue-on-error: true
     steps:
       - uses: actions/checkout@v6
@@ -97,9 +97,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libgl1-mesa-dev file
-      - name: Test core and mock
-        run: cargo test -p tvhme-core -p tvhme-mock -p tvhme-app
+      # The tests already run on amd64 and arm64. Here only the build matters, and it is the slow part on
+      # RISC-V hardware: thin-local LTO and parallel code generation make it much quicker than the
+      # release profile used for the other architectures.
       - name: Build app
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "off"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
         run: cargo build --release -p tvhme-app --bin tvhme
       - name: Package tar.gz
         run: |

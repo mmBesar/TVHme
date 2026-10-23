@@ -70,6 +70,7 @@ impl Drop for SignalWatch {
 impl Session {
     pub async fn connect(o: ConnectOptions) -> Result<Session, SessionError> {
         let addr = ServerAddress::parse(&o.address).map_err(|e| ApiError::BadResponse(e.to_string()))?;
+        let addr = Api::follow_upgrade(addr, o.insecure_tls).await;
         let api = Api::new(addr.clone(), &o.user, &o.pass, o.insecure_tls)?.with_auth_code(&o.auth_code);
         let permissions = Permissions::probe(&api).await?;
         let mut channels = api.channels().await?;

@@ -83,18 +83,63 @@ fn decode_rgba(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     Some((rgba.width(), rgba.height(), rgba.into_raw()))
 }
 
+/// A downloaded logo, ready to become an `Image` on the UI thread.
+enum Decoded { Pixels(u32, u32, Vec<u8>), Svg(Vec<u8>) }
+
+/// PNG, JPEG, GIF and WebP through the `image` crate; SVG is handed to Slint as it is.
+fn decode_logo(bytes: &[u8]) -> Result<Decoded, String> {
+    let head = String::from_utf8_lossy(&bytes[..bytes.len().min(512)]).to_lowercase();
+    if head.contains("<svg") { return Ok(Decoded::Svg(bytes.to_vec())); }
+    match decode_rgba(bytes) {
+        Some((w, h, px)) => Ok(Decoded::Pixels(w, h, px)),
+        None => Err(format!("unknown picture format ({} bytes)", bytes.len())),
+    }
+}
+
+static LOGO_PROBLEMS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn note_logo_problem(w: &slint::Weak<MainWindow>, name: &str, why: &str) {
+    let text = {
+        let Ok(mut g) = LOGO_PROBLEMS.lock() else { return };
+        if g.len() < 40 { g.push(format!("{name}: {why}")); }
+        g.join("\n")
+    };
+    ui_do(w, move |ui| ui.set_logo_problems(text.into()));
+}
+
 /// Fetch every channel logo in the background (a few at a time) and put each on screen as it arrives.
+/// A server behind a proxy sometimes answers the first request for a picture it has not cached yet with an
+/// error, so a failure is retried a couple of times before it is reported in Settings.
 fn load_logos(w: slint::Weak<MainWindow>, s: Arc<Session>) {
+    if let Ok(mut g) = LOGO_PROBLEMS.lock() { g.clear(); }
+    ui_do(&w, |ui| ui.set_logo_problems("".into()));
     rt().spawn(async move {
         let gate = Arc::new(tokio::sync::Semaphore::new(6));
         for c in s.channels.iter().filter(|c| c.icon.is_some()) {
-            let (uuid, src, s, w, gate) = (c.uuid.clone(), c.icon.clone().unwrap_or_default(), s.clone(), w.clone(), gate.clone());
+            let (uuid, name, src, s, w, gate) = (c.uuid.clone(), c.name.clone(), c.icon.clone().unwrap_or_default(), s.clone(), w.clone(), gate.clone());
             tokio::spawn(async move {
                 let Ok(_p) = gate.acquire().await else { return };
-                let Ok(bytes) = s.api.image(&src).await else { return };
-                let Some((wd, ht, px)) = tokio::task::spawn_blocking(move || decode_rgba(&bytes)).await.ok().flatten() else { return };
+                let mut last = String::new();
+                let mut decoded = None;
+                for attempt in 0..3u64 {
+                    if attempt > 0 { tokio::time::sleep(std::time::Duration::from_millis(800 * attempt)).await; }
+                    match s.api.image(&src).await {
+                        Ok(bytes) => {
+                            match tokio::task::spawn_blocking(move || decode_logo(&bytes)).await {
+                                Ok(Ok(d)) => { decoded = Some(d); break; }
+                                Ok(Err(e)) => { last = e; break; } // retrying cannot fix a format we cannot read
+                                Err(e) => { last = e.to_string(); }
+                            }
+                        }
+                        Err(e) => last = e.user_message(),
+                    }
+                }
+                let Some(decoded) = decoded else { note_logo_problem(&w, &name, &format!("{last} [{src}]")); return };
                 ui_do(&w, move |ui| {
-                    let img = Image::from_rgba8(SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(&px, wd, ht));
+                    let img = match decoded {
+                        Decoded::Pixels(wd, ht, px) => Image::from_rgba8(SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(&px, wd, ht)),
+                        Decoded::Svg(data) => match Image::load_from_svg_data(&data) { Ok(i) => i, Err(_) => return },
+                    };
                     LOGOS.with(|l| l.borrow_mut().insert(uuid.clone(), img.clone()));
                     let m = ui.get_channels();
                     for i in 0..m.row_count() {
@@ -1091,6 +1136,18 @@ mod tests {
     use super::*;
     fn ev(id: u32, start: i64, stop: i64, title: &str) -> Event {
         Event { id, channel_uuid: "c".into(), channel_name: "C".into(), start, stop, title: title.into(), ..Default::default() }
+    }
+    #[test]
+    fn logos_in_common_formats_are_read() {
+        const GIF: &[u8] = &[71, 73, 70, 56, 57, 97, 1, 0, 1, 0, 128, 0, 0, 0, 0, 0, 255, 255, 255, 33, 249, 4, 1, 0, 0, 0, 0, 44, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 1, 68, 0, 59];
+        const WEBP: &[u8] = &[82, 73, 70, 70, 26, 0, 0, 0, 87, 69, 66, 80, 86, 80, 56, 76, 13, 0, 0, 0, 47, 0, 0, 0, 16, 7, 16, 17, 17, 136, 136, 254, 7, 0];
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::RgbaImage::new(2, 2).write_to(&mut png, image::ImageFormat::Png).unwrap();
+        assert!(matches!(decode_logo(&png.into_inner()), Ok(Decoded::Pixels(2, 2, _))));
+        assert!(matches!(decode_logo(GIF), Ok(Decoded::Pixels(1, 1, _))));
+        assert!(matches!(decode_logo(WEBP), Ok(Decoded::Pixels(1, 1, _))));
+        assert!(matches!(decode_logo(b"<?xml version=\"1.0\"?><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\"/>"), Ok(Decoded::Svg(_))));
+        assert!(decode_logo(b"<html>not found</html>").is_err());
     }
     #[test]
     fn rtl_detection_uses_first_letter() {

@@ -289,3 +289,25 @@ async fn dropping_the_signal_watch_off_the_runtime_does_not_panic() {
     assert_eq!(sw.source, SignalSource::Htsp);
     std::thread::spawn(move || drop(sw)).join().expect("drop must not panic");
 }
+
+#[tokio::test]
+async fn a_server_that_redirects_to_another_port_is_followed_before_login() {
+    // stands in for "http://tv.example.com" answering with a redirect to https: same host, other port
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let m = tvhme_mock::spawn().await;
+    let real = m.http.port();
+    let front = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let front_port = front.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut s, _)) = front.accept().await else { return };
+            let mut buf = [0u8; 2048];
+            let _ = s.read(&mut buf).await;
+            let r = format!("HTTP/1.1 308 Permanent Redirect\r\nLocation: http://127.0.0.1:{real}/api/serverinfo\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            let _ = s.write_all(r.as_bytes()).await;
+        }
+    });
+    let s = Session::connect(opts(format!("127.0.0.1:{front_port}"), "user", "user", None)).await.unwrap();
+    assert_eq!(s.api.addr.port, real);
+    assert_eq!(s.channels.len(), 3);
+}
