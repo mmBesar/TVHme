@@ -595,6 +595,13 @@ impl Api {
         self.action("/api/dvr/entry/create_by_event", &[("config_uuid", &cfg), ("event_id", &event_id.to_string())]).await
     }
 
+    /// Record every future showing of this programme's series (a Tvheadend "autorec" rule built from the event).
+    /// UNVERIFIED against a real server: endpoint and fields follow Tvheadend's `dvr/autorec/create_by_series`.
+    pub async fn record_series(&self, event_id: u32) -> Result<(), ApiError> {
+        let cfg = self.default_dvr_config().await?;
+        self.action("/api/dvr/autorec/create_by_series", &[("config_uuid", &cfg), ("event_id", &event_id.to_string())]).await
+    }
+
     /// Record a channel right now for `minutes` (a one-off timer). UNVERIFIED against a real server:
     /// field names follow the `dvr/entry/create` `conf` object (start, stop, channel, title).
     pub async fn record_now(&self, channel_uuid: &str, title: &str, minutes: u32) -> Result<(), ApiError> {

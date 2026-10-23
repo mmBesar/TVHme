@@ -27,7 +27,7 @@ pub const CHANNELS: [(&str, u32, &str); 3] = [("uuid-one", 1, "Mock One"), ("uui
 struct Rec { uuid: String, event_id: u32, channel: String, title: String, start: i64, stop: i64, state: &'static str }
 
 #[derive(Default)]
-struct State { recs: Vec<Rec>, next: u32, enabled: std::collections::HashMap<String, bool> }
+struct State { recs: Vec<Rec>, rules: Vec<String>, next: u32, enabled: std::collections::HashMap<String, bool> }
 
 /// A channel the admin has switched off (only visible to the management call).
 pub const HIDDEN: (&str, u32, &str) = ("uuid-hidden", 9, "Mock Hidden");
@@ -288,6 +288,22 @@ async fn http_conn(mut stream: TcpStream, webroot: String, state: Shared) {
                         let n = now();
                         let uuid = format!("rec-{}", st.next);
                         st.recs.push(Rec { uuid, event_id: id, channel: e.1.to_string(), title: e.2.to_string(), start: n + e.4, stop: n + e.5, state: "scheduled" });
+                        json_ok("{}".into())
+                    }
+                    _ => ("400 Bad Request", "text/plain", b"bad parameters".to_vec()),
+                }
+            }
+            "/api/dvr/autorec/grid" if can_record => {
+                let st = state.lock().unwrap();
+                let e: Vec<String> = st.rules.iter().map(|t| format!("{{\"title\":\"{t}\"}}")).collect();
+                json_ok(format!("{{\"entries\":[{}],\"total\":{}}}", e.join(","), e.len()))
+            }
+            "/api/dvr/autorec/create_by_series" if can_record => {
+                let id: u32 = param("event_id").and_then(|v| v.parse().ok()).unwrap_or(0);
+                match (param("config_uuid").as_deref(), EVENTS.iter().find(|e| e.0 == id)) {
+                    (Some("cfg-default"), Some(e)) => {
+                        let mut st = state.lock().unwrap();
+                        st.rules.push(e.2.to_string());
                         json_ok("{}".into())
                     }
                     _ => ("400 Bad Request", "text/plain", b"bad parameters".to_vec()),

@@ -2,6 +2,7 @@ slint::include_modules!();
 
 mod config;
 mod fmt;
+mod recgroup;
 mod player;
 #[cfg(not(target_os = "android"))]
 mod integrate;
@@ -503,6 +504,30 @@ fn guide_enter(ui: &MainWindow, w: &slint::Weak<MainWindow>, session: &Shared) {
     }
 }
 
+thread_local! {
+    /// The recordings list as last fetched, so changing the grouping needs no new request.
+    static RECS: RefCell<Vec<tvhme_core::api::Recording>> = const { RefCell::new(Vec::new()) };
+}
+
+fn show_recordings(ui: &MainWindow) {
+    let by = recgroup::GroupBy::from_index(ui.get_rec_group());
+    let (now, off) = (fmt::now_ts(), fmt::local_offset());
+    let items: Vec<RecItem> = RECS.with(|l| {
+        let l = l.borrow();
+        recgroup::arrange(&l, by).into_iter().map(|line| match line {
+            recgroup::Line::Heading(name, n) => RecItem { uuid: "".into(), title: format!("{name}  ({n})").into(), channel: "".into(), when: "".into(), status: "".into(), running: false, header: true },
+            recgroup::Line::Item(r) => RecItem {
+                uuid: r.uuid.clone().into(), title: r.title.clone().into(), channel: r.channel_name.clone().into(),
+                when: fmt::range(r.start, r.stop, now, off).into(),
+                status: (if r.status.is_empty() { r.sched_status.clone() } else { r.status.clone() }).into(),
+                running: r.sched_status == "recording", header: false,
+            },
+        }).collect()
+    });
+    ui.set_rec_note(if items.is_empty() { "Nothing here".into() } else { "".into() });
+    ui.set_recordings(ModelRc::new(VecModel::from(items)));
+}
+
 fn load_recordings(w: &slint::Weak<MainWindow>, session: &Shared, kind: i32) {
     let (w, session) = (w.clone(), session.clone());
     rt().spawn(async move {
@@ -510,18 +535,8 @@ fn load_recordings(w: &slint::Weak<MainWindow>, session: &Shared, kind: i32) {
         let k = match kind { 1 => RecordingKind::Finished, 2 => RecordingKind::Failed, _ => RecordingKind::Upcoming };
         let res = s.api.recordings(k).await;
         ui_do(&w, move |ui| match res {
-            Ok(list) => {
-                let (now, off) = (fmt::now_ts(), fmt::local_offset());
-                let items: Vec<RecItem> = list.iter().map(|r| RecItem {
-                    uuid: r.uuid.clone().into(), title: r.title.clone().into(), channel: r.channel_name.clone().into(),
-                    when: fmt::range(r.start, r.stop, now, off).into(),
-                    status: (if r.status.is_empty() { r.sched_status.clone() } else { r.status.clone() }).into(),
-                    running: r.sched_status == "recording",
-                }).collect();
-                ui.set_rec_note(if items.is_empty() { "Nothing here".into() } else { "".into() });
-                ui.set_recordings(ModelRc::new(VecModel::from(items)));
-            }
-            Err(e) => { ui.set_recordings(ModelRc::default()); ui.set_rec_note(e.user_message().into()); }
+            Ok(list) => { RECS.with(|l| *l.borrow_mut() = list); show_recordings(ui); }
+            Err(e) => { RECS.with(|l| l.borrow_mut().clear()); ui.set_recordings(ModelRc::default()); ui.set_rec_note(e.user_message().into()); }
         });
     });
 }
@@ -921,6 +936,10 @@ pub fn run() -> Result<(), slint::PlatformError> {
     rec_action!(on_cancel_recording, cancel_recording, "Recording cancelled");
     rec_action!(on_remove_recording, remove_recording, "Recording removed");
 
+    ui.on_rec_group_changed({
+        let w = ui.as_weak();
+        move || if let Some(ui) = w.upgrade() { show_recordings(&ui); }
+    });
     ui.on_load_recordings({
         let (w, session) = (ui.as_weak(), session.clone());
         move |k| load_recordings(&w, &session, k)
@@ -965,6 +984,18 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 let msg = match s.api.record_event(id as u32).await { Ok(()) => "Scheduled".to_string(), Err(e) => e.user_message() };
                 refresh_channel(&w, s, channel);
                 ui_do(&w, move |ui| { ui.set_toast(msg.into()); ui.set_detail_open(false); if ui.get_tab() == 1 && ui.get_guide_mode() == 1 { ui.invoke_open_channel(ui.get_chan_uuid()); } });
+            });
+        }
+    });
+
+    ui.on_detail_record_series({
+        let (w, session) = (ui.as_weak(), session.clone());
+        move |id| {
+            let (w, session) = (w.clone(), session.clone());
+            rt().spawn(async move {
+                let Some(s) = session.lock().await.clone() else { return };
+                let msg = match s.api.record_series(id as u32).await { Ok(()) => "Series rule created: every showing will be recorded".to_string(), Err(e) => e.user_message() };
+                ui_do(&w, move |ui| { ui.set_toast(msg.into()); ui.set_detail_open(false); });
             });
         }
     });

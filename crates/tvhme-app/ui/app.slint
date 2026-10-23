@@ -9,7 +9,7 @@ export struct TlEvent { id: int, title: string, x: length, w: length, live: bool
 export struct TlRow { uuid: string, name: string, initials: string, logo: image, has-logo: bool, events: [TlEvent] }
 export struct ManageItem { uuid: string, number: int, name: string, enabled: bool }
 export struct Tick { x: length, label: string }
-export struct RecItem { uuid: string, title: string, channel: string, when: string, status: string, running: bool }
+export struct RecItem { uuid: string, title: string, channel: string, when: string, status: string, running: bool, header: bool }
 
 export global Theme {
     in property <bool> use-system: false;
@@ -365,6 +365,8 @@ export component MainWindow inherits Window {
     in property <[EventItem]> search-events;
     in property <string> search-note;
     in-out property <int> rec-kind: 0;
+    in-out property <int> rec-group: 0;
+    callback rec-group-changed();
     in property <[RecItem]> recordings;
     in property <string> rec-note;
     in property <string> now-playing;
@@ -426,6 +428,7 @@ export component MainWindow inherits Window {
     callback guide-mode-changed(int);
     callback event-clicked(int);
     callback detail-record(int, string);
+    callback detail-record-series(int);
     callback detail-cancel(string, string);
     callback play(string);
     callback record-now(string, string);
@@ -774,14 +777,27 @@ export component MainWindow inherits Window {
                         Chip { text: "Finished"; active: root.rec-kind == 1; clicked => { root.rec-kind = 1; root.load-recordings(1); } }
                         Chip { text: "Failed"; active: root.rec-kind == 2; clicked => { root.rec-kind = 2; root.load-recordings(2); } }
                     }
+                    HorizontalLayout {
+                        padding-left: 12px; padding-right: 12px; padding-bottom: 8px; spacing: 8px; height: 44px;
+                        Text { text: "Group:"; color: Theme.fg-dim; vertical-alignment: center; }
+                        Chip { text: "None"; active: root.rec-group == 0; clicked => { root.rec-group = 0; root.rec-group-changed(); } }
+                        Chip { text: "Channel"; active: root.rec-group == 1; clicked => { root.rec-group = 1; root.rec-group-changed(); } }
+                        Chip { text: "Series"; active: root.rec-group == 2; clicked => { root.rec-group = 2; root.rec-group-changed(); } }
+                    }
                     if root.rec-note != "": Text { text: root.rec-note; color: Theme.fg-dim; horizontal-alignment: center; wrap: word-wrap; }
                     ListView {
-                        for r in root.recordings: RecRow {
-                            rec: r; kind: root.rec-kind;
-                            play => { root.play-recording(r.uuid); }
-                            stop => { root.stop-recording(r.uuid); }
-                            cancel => { root.cancel-recording(r.uuid); }
-                            remove => { root.remove-recording(r.uuid); }
+                        for r in root.recordings: VerticalLayout {
+                            if r.header: Rectangle {
+                                height: 36px;
+                                Text { x: 16px; text: r.title; color: Theme.acc; font-weight: 700; font-size: 15px; vertical-alignment: center; overflow: elide; width: parent.width - 32px; }
+                            }
+                            if !r.header: RecRow {
+                                rec: r; kind: root.rec-kind;
+                                play => { root.play-recording(r.uuid); }
+                                stop => { root.stop-recording(r.uuid); }
+                                cancel => { root.cancel-recording(r.uuid); }
+                                remove => { root.remove-recording(r.uuid); }
+                            }
                         }
                     }
                 }
@@ -981,6 +997,7 @@ export component MainWindow inherits Window {
                             text: root.detail.dvr-uuid != "" ? "Cancel rec" : "Record";
                             clicked => { if root.detail.dvr-uuid != "" { root.detail-cancel(root.detail.dvr-uuid, root.detail.channel-uuid); } else { root.detail-record(root.detail.id, root.detail.channel-uuid); } }
                         }
+                        if root.detail.dvr-uuid == "": TButton { text: "Series"; clicked => { root.detail-record-series(root.detail.id); } }
                         TButton { text: "Close"; clicked => { root.detail-open = false; } }
                     }
                 }

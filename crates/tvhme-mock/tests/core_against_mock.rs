@@ -328,3 +328,15 @@ async fn stream_profile_is_listed_and_goes_into_the_play_address() {
     h.api.set_profile("matroska");
     assert!(h.playback_url("uuid-two").await.contains("profile=matroska"));
 }
+
+#[tokio::test]
+async fn series_recording_creates_a_rule_for_accounts_that_may_record() {
+    let m = tvhme_mock::spawn().await;
+    let s = Session::connect(opts(addr(&m), "admin", "admin", None)).await.unwrap();
+    s.api.record_series(1).await.unwrap();
+    let body = reqwest::Client::new().get(format!("http://{}/api/dvr/autorec/grid", m.http)).basic_auth("admin", Some("admin")).send().await.unwrap().text().await.unwrap();
+    assert!(body.contains("\"total\":1"), "{body}");
+    // a viewer may not record: the server says so
+    let v = Session::connect(opts(addr(&m), "viewer", "viewer", None)).await.unwrap();
+    assert!(v.api.record_series(1).await.is_err());
+}
