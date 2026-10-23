@@ -9,7 +9,7 @@ export struct TlEvent { id: int, title: string, x: length, w: length, live: bool
 export struct TlRow { uuid: string, name: string, initials: string, logo: image, has-logo: bool, events: [TlEvent] }
 export struct ManageItem { uuid: string, number: int, name: string, enabled: bool }
 export struct Tick { x: length, label: string }
-export struct RecItem { uuid: string, title: string, channel: string, when: string, status: string, running: bool, header: bool }
+export struct RecItem { uuid: string, title: string, channel: string, when: string, status: string, running: bool, header: bool, logo: image, has-logo: bool, initials: string }
 
 export global Theme {
     in property <bool> use-system: false;
@@ -88,7 +88,7 @@ component TField inherits Rectangle {
             // Identifiers, URLs and passwords: no auto-capital, no auto-correct/suggestions
             input := TextInput {
                 color: Theme.fg; input-type: root.kind; vertical-alignment: center; single-line: true;
-                selection-background-color: Theme.acc.with-alpha(0.4); selection-foreground-color: Theme.fg;
+                selection-background-color: self.preedit-text != "" ? transparent : Theme.acc.with-alpha(0.4); selection-foreground-color: Theme.fg;
                 input-method-hints: { capitalization: CapitalizationMode.none, auto-correct: false, auto-complete: false };
                 accepted => { root.accepted(); }
                 edited => { root.edited(); }
@@ -227,6 +227,7 @@ component RecRow inherits Rectangle {
         y: 4px; height: parent.height - 8px; background: Theme.card; border-radius: 8px; clip: true;
         HorizontalLayout {
             padding: 10px; spacing: 10px;
+            VerticalLayout { alignment: center; Logo { width: 48px; height: 36px; source: root.rec.logo; has-logo: root.rec.has-logo; name: root.rec.initials; } }
             VerticalLayout {
                 horizontal-stretch: 1; spacing: 2px; alignment: center; min-width: 0px;
                 Text { text: root.rec.title; color: Theme.fg; font-weight: 700; overflow: elide; }
@@ -422,6 +423,7 @@ export component MainWindow inherits Window {
     callback connect(string, string, string, string, bool, string);
     callback tab-changed(int);
     callback select-tag(string);
+    callback swipe-tag(int);
     callback open-channel(string);
     callback filter-channels(string);
     callback picker-filter-changed(string);
@@ -551,6 +553,8 @@ export component MainWindow inherits Window {
                         padding-left: 12px; padding-right: 12px; padding-bottom: 6px; height: 48px;
                         TField { placeholder: "Search channels"; text <=> root.channel-filter; edited => { root.filter-channels(root.channel-filter); } }
                     }
+                    Rectangle {
+                        vertical-stretch: 1;
                     ListView {
                         for ch in root.channels: Rectangle {
                             height: 104px;
@@ -601,6 +605,16 @@ export component MainWindow inherits Window {
                                         }
                                     }
                                 }
+                            }
+                        }
+                    }
+                        // swipe sideways to move to the neighbouring group
+                        SwipeGestureHandler {
+                            handle-swipe-left: true; handle-swipe-right: true;
+                            swiped => {
+                                let dx = self.current-position.x - self.pressed-position.x;
+                                let dy = self.current-position.y - self.pressed-position.y;
+                                if (abs(dx) > 60px && abs(dx) > abs(dy) * 1.5) { root.swipe-tag(dx < 0px ? 1 : -1); }
                             }
                         }
                     }
@@ -785,6 +799,8 @@ export component MainWindow inherits Window {
                         Chip { text: "Series"; active: root.rec-group == 2; clicked => { root.rec-group = 2; root.rec-group-changed(); } }
                     }
                     if root.rec-note != "": Text { text: root.rec-note; color: Theme.fg-dim; horizontal-alignment: center; wrap: word-wrap; }
+                    Rectangle {
+                        vertical-stretch: 1;
                     ListView {
                         for r in root.recordings: VerticalLayout {
                             if r.header: Rectangle {
@@ -797,6 +813,18 @@ export component MainWindow inherits Window {
                                 stop => { root.stop-recording(r.uuid); }
                                 cancel => { root.cancel-recording(r.uuid); }
                                 remove => { root.remove-recording(r.uuid); }
+                            }
+                        }
+                    }
+                        SwipeGestureHandler {
+                            handle-swipe-left: true; handle-swipe-right: true;
+                            swiped => {
+                                let dx = self.current-position.x - self.pressed-position.x;
+                                let dy = self.current-position.y - self.pressed-position.y;
+                                if (abs(dx) > 60px && abs(dx) > abs(dy) * 1.5) {
+                                    let k = max(0, min(2, root.rec-kind + (dx < 0px ? 1 : -1)));
+                                    if (k != root.rec-kind) { root.rec-kind = k; root.load-recordings(k); }
+                                }
                             }
                         }
                     }

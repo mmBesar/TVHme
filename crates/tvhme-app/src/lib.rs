@@ -21,6 +21,8 @@ use tvhme_core::theme::{Accent, Flavor, ThemeChoice};
 thread_local! {
     /// Channel logos by channel uuid. Slint images belong to the UI thread, hence thread-local.
     static LOGOS: RefCell<HashMap<String, Image>> = RefCell::new(HashMap::new());
+    /// Channel name (lower case) to channel uuid, so a recording (which only knows the name) can show its logo.
+    static CHAN_BY_NAME: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
 }
 
 /// "BBC One" -> "BO", "Mock Two" -> "MT", "Nile" -> "NI": shown when a channel has no logo.
@@ -70,6 +72,11 @@ fn apply_now_next(row: &mut ChannelItem, evs: &[Event], t: i64, off: chrono::Fix
 
 fn register(evs: &[Event]) {
     EVENTS.with(|m| { let mut m = m.borrow_mut(); if m.len() > 20_000 { m.clear(); } for e in evs { m.insert(e.id as i32, e.clone()); } });
+}
+
+fn recording_logo(channel_name: &str) -> (Image, bool) {
+    let uuid = CHAN_BY_NAME.with(|m| m.borrow().get(&channel_name.trim().to_lowercase()).cloned());
+    match uuid { Some(u) => logo_for(&u), None => (Image::default(), false) }
 }
 
 fn logo_for(uuid: &str) -> (Image, bool) {
@@ -515,13 +522,13 @@ fn show_recordings(ui: &MainWindow) {
     let items: Vec<RecItem> = RECS.with(|l| {
         let l = l.borrow();
         recgroup::arrange(&l, by).into_iter().map(|line| match line {
-            recgroup::Line::Heading(name, n) => RecItem { uuid: "".into(), title: format!("{name}  ({n})").into(), channel: "".into(), when: "".into(), status: "".into(), running: false, header: true },
-            recgroup::Line::Item(r) => RecItem {
+            recgroup::Line::Heading(name, n) => RecItem { uuid: "".into(), title: format!("{name}  ({n})").into(), channel: "".into(), when: "".into(), status: "".into(), running: false, header: true, logo: Image::default(), has_logo: false, initials: "".into() },
+            recgroup::Line::Item(r) => { let (logo, has_logo) = recording_logo(&r.channel_name); RecItem {
                 uuid: r.uuid.clone().into(), title: r.title.clone().into(), channel: r.channel_name.clone().into(),
                 when: fmt::range(r.start, r.stop, now, off).into(),
                 status: (if r.status.is_empty() { r.sched_status.clone() } else { r.status.clone() }).into(),
-                running: r.sched_status == "recording", header: false,
-            },
+                running: r.sched_status == "recording", header: false, logo, has_logo, initials: initials(&r.channel_name).into(),
+            } },
         }).collect()
     });
     ui.set_rec_note(if items.is_empty() { "Nothing here".into() } else { "".into() });
@@ -764,6 +771,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                         let _ = slint::invoke_from_event_loop(move || {
                             let Some(ui) = w.upgrade() else { return };
                             LOGOS.with(|l| l.borrow_mut().clear());
+                            CHAN_BY_NAME.with(|m| *m.borrow_mut() = s2.channels.iter().map(|c| (c.name.trim().to_lowercase(), c.uuid.clone())).collect());
                             LIVE_FILTER.with(|f| f.borrow_mut().clear());
                             CHAN_EVENTS.with(|m| m.borrow_mut().clear());
                             let items = channel_items(&s2, &live_tag, "");
@@ -817,6 +825,20 @@ pub fn run() -> Result<(), slint::PlatformError> {
             rebuild_live(&w, &session);
             ui.set_tl_rows(ModelRc::default());
             if ui.get_tab() == 1 && ui.get_guide_mode() == 0 { load_timeline(w.clone(), session.clone(), sel); }
+        }
+    });
+
+    ui.on_swipe_tag({
+        let w = ui.as_weak();
+        move |dir| {
+            let Some(ui) = w.upgrade() else { return };
+            let tags: Vec<TagItem> = ui.get_tags().iter().collect();
+            // order: "all channels", then every group
+            let cur = tags.iter().position(|t| t.selected).map(|i| i + 1).unwrap_or(0) as i32;
+            let next = (cur + dir).clamp(0, tags.len() as i32);
+            if next == cur { return; }
+            if next == 0 { if let Some(t) = tags.iter().find(|t| t.selected) { ui.invoke_select_tag(t.uuid.clone()); } }
+            else { ui.invoke_select_tag(tags[next as usize - 1].uuid.clone()); }
         }
     });
 
