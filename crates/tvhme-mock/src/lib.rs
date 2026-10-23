@@ -257,6 +257,7 @@ async fn http_conn(mut stream: TcpStream, webroot: String, state: Shared) {
                 json_ok("{}".into())
             }
             "/api/idnode/save" => forbidden(),
+            "/api/profile/list" => json_ok("{\"entries\":[{\"key\":\"p1\",\"val\":\"pass\"},{\"key\":\"p2\",\"val\":\"matroska\"},{\"key\":\"p3\",\"val\":\"webtv-h264-aac-matroska\"}]}".into()),
             "/api/channeltag/grid" => json_ok("{\"entries\":[{\"uuid\":\"tag-movies\",\"name\":\"Movies\",\"enabled\":true,\"index\":2},{\"uuid\":\"tag-news\",\"name\":\"News\",\"enabled\":true,\"index\":1}],\"total\":2}".into()),
             "/api/epg/events/grid" => {
                 let st = state.lock().unwrap();

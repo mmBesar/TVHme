@@ -328,6 +328,11 @@ export component MainWindow inherits Window {
     in property <[Tick]> tl-ticks;
     in property <length> tl-width: 0px;
     in property <length> tl-now-x: 0px;
+    in property <[string]> tl-days;
+    in property <int> tl-day: 0;
+    in property <length> tl-start-x: 0px;
+    callback select-day(int);
+    callback tl-zoom(int);
     in property <bool> tl-busy: false;
     in-out property <bool> detail-open: false;
     in property <EventItem> detail;
@@ -393,6 +398,9 @@ export component MainWindow inherits Window {
     in property <bool> can-record-local: false;
     callback record-local-changed(bool);
     in property <[string]> player-names;
+    in property <[string]> profile-names;
+    in-out property <int> profile-index: 0;
+    callback profile-changed(int);
 
     callback connect(string, string, string, string, bool, string);
     callback tab-changed(int);
@@ -611,6 +619,19 @@ export component MainWindow inherits Window {
 
                     // --- timeline
                     if root.guide-mode == 0: VerticalLayout {
+                        // day buttons and zoom
+                        HorizontalLayout {
+                            padding-left: 12px; padding-right: 12px; spacing: 8px; height: 42px;
+                            TButton { text: "−"; width: 40px; height: 34px; clicked => { root.tl-zoom(-1); } }
+                            TButton { text: "+"; width: 40px; height: 34px; clicked => { root.tl-zoom(1); } }
+                            days-flick := Flickable {
+                                content-width: days-row.preferred-width;
+                                days-row := HorizontalLayout {
+                                    spacing: 8px; height: 34px;
+                                    for d[i] in root.tl-days: Chip { text: d; active: root.tl-day == i; clicked => { root.select-day(i); } }
+                                }
+                            }
+                        }
                         TouchArea {
                             height: 46px;
                             scroll-event(e) => {
@@ -633,6 +654,8 @@ export component MainWindow inherits Window {
                         Rectangle {
                             vertical-stretch: 1; clip: true;
                             property <length> chan-w: root.wide ? 150px : 64px;
+                            property <length> start-x: root.tl-start-x;
+                            changed start-x => { tl.content-x = -self.start-x; }
                             Rectangle {
                                 x: parent.chan-w; y: 0px; height: 28px; width: parent.width - parent.chan-w; clip: true;
                                 Rectangle {
@@ -809,6 +832,12 @@ export component MainWindow inherits Window {
                                 }
                                 Text { text: "Video player"; color: Theme.fg; font-size: 22px; font-weight: 700; }
                                 TSelect { model: root.player-names; current-index <=> root.player; selected(i) => { root.player-changed(i); } }
+                                if root.profile-names.length > 1: VerticalLayout {
+                                    spacing: 8px;
+                                    Text { text: "Stream quality (server profile)"; color: Theme.fg; font-size: 18px; font-weight: 700; }
+                                    Text { text: "pass = untouched stream. Other profiles make the server convert it, which needs server CPU."; color: Theme.fg-dim; font-size: 13px; wrap: word-wrap; }
+                                    TSelect { model: root.profile-names; current-index <=> root.profile-index; selected(i) => { root.profile-changed(i); } }
+                                }
                                 if root.can-record-local: VerticalLayout {
                                     spacing: 8px;
                                     Text { text: "Recording on this computer"; color: Theme.fg; font-size: 18px; font-weight: 700; }

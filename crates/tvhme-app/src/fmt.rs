@@ -14,6 +14,9 @@ pub fn range(start: i64, stop: i64, now: i64, off: FixedOffset) -> String {
     else { format!("{} {}", s.format("%a %d %b"), times) }
 }
 
+/// "Sat 24" for the day button of a later day.
+pub fn day_label(ts: i64, off: FixedOffset) -> String { at(ts, off).format("%a %d").to_string() }
+
 /// "21:30" in the viewer's time zone.
 pub fn hm(ts: i64, off: FixedOffset) -> String { at(ts, off).format("%H:%M").to_string() }
 

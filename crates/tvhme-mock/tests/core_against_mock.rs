@@ -311,3 +311,20 @@ async fn a_server_that_redirects_to_another_port_is_followed_before_login() {
     assert_eq!(s.api.addr.port, real);
     assert_eq!(s.channels.len(), 3);
 }
+
+#[tokio::test]
+async fn stream_profile_is_listed_and_goes_into_the_play_address() {
+    let m = tvhme_mock::spawn().await;
+    let s = Session::connect(opts(addr(&m), "user", "user", Some(m.htsp.port()))).await.unwrap();
+    assert_eq!(s.api.stream_profiles().await, ["pass", "matroska", "webtv-h264-aac-matroska"]);
+    // nothing chosen: what we always did
+    assert!(s.playback_url("uuid-two").await.contains("profile=pass"));
+    s.api.set_profile("webtv-h264-aac-matroska");
+    assert!(s.playback_url("uuid-two").await.contains("profile=webtv-h264-aac-matroska"));
+    s.api.set_profile("");
+    assert!(s.playback_url("uuid-two").await.contains("profile=pass"));
+    // without HTSP the profile also reaches the ticket address
+    let h = Session::connect(opts(addr(&m), "user", "user", None)).await.unwrap();
+    h.api.set_profile("matroska");
+    assert!(h.playback_url("uuid-two").await.contains("profile=matroska"));
+}

@@ -326,6 +326,8 @@ pub struct Api {
     user: String,
     pass: String,
     auth: String,
+    /// Streaming profile chosen by the person (empty = what we always did: `pass`).
+    profile: std::sync::RwLock<String>,
 }
 
 impl Api {
@@ -342,7 +344,7 @@ impl Api {
             .map_err(|e| ApiError::BadResponse(e.to_string()));
         let http = build(reqwest::redirect::Policy::limited(5))?;
         let http_noredir = build(reqwest::redirect::Policy::none())?;
-        Ok(Api { http, http_noredir, addr, user: user.into(), pass: pass.into(), auth: String::new() })
+        Ok(Api { http, http_noredir, addr, user: user.into(), pass: pass.into(), auth: String::new(), profile: Default::default() })
     }
 
     /// Typing `http://tv.example.com` in front of a server that sends everything to https makes the login
@@ -363,6 +365,27 @@ impl Api {
     pub fn with_auth_code(mut self, code: &str) -> Api { self.auth = code.trim().into(); self }
     pub fn has_auth_code(&self) -> bool { !self.auth.is_empty() }
 
+    /// Choose the stream profile (`pass`, `matroska`, a transcoding profile...). Empty goes back to the default.
+    pub fn set_profile(&self, name: &str) { if let Ok(mut p) = self.profile.write() { *p = name.trim().to_string(); } }
+    /// The chosen profile, or `fallback` when none was chosen.
+    pub fn profile_or(&self, fallback: &str) -> String {
+        let p = self.profile.read().map(|p| p.clone()).unwrap_or_default();
+        if p.is_empty() { fallback.to_string() } else { p }
+    }
+    fn chosen_profile(&self) -> Option<String> {
+        let p = self.profile.read().map(|p| p.clone()).unwrap_or_default();
+        (!p.is_empty()).then_some(p)
+    }
+
+    /// Names of the stream profiles this account may use (empty when the server does not say).
+    pub async fn stream_profiles(&self) -> Vec<String> {
+        #[derive(Deserialize, Default)]
+        #[serde(default)]
+        struct E { val: String }
+        let Ok(g) = self.json::<Grid<E>>("/api/profile/list").await else { return Vec::new() };
+        g.entries.into_iter().map(|e| e.val).filter(|v| !v.is_empty()).collect()
+    }
+
     /// Ask the server for a play ticket for `path` (e.g. `/dvrfile/<uuid>`), the way the web interface does:
     /// `GET /play/ticket<path>` answers with a redirect to `<path>?ticket=...`. Returns the URL to give a player,
     /// or None when the server does not do tickets (the caller then falls back to the login in the URL).
@@ -376,14 +399,19 @@ impl Api {
         // a reverse proxy that makes the server think it lives elsewhere cannot send the player astray.
         let t = loc.split_once("ticket=")?.1.split('&').next()?.to_string();
         if t.is_empty() { return None; }
-        let extra = if path.starts_with("/stream/") { "&profile=pass" } else { "" };
+        let extra = if path.starts_with("/stream/") { format!("&profile={}", crate::address::pct(&self.profile_or("pass"))) } else { String::new() };
         Some(format!("{}?ticket={}{}", self.addr.url(path), t, extra))
     }
 
     /// Channel stream URL. With an authentication code: `/stream/channel/<uuid>?auth=<code>` (no password in the URL).
     pub fn stream_url(&self, uuid: &str) -> String {
-        if self.has_auth_code() { return format!("{}?auth={}", self.addr.url(&format!("/stream/channel/{uuid}")), crate::address::pct(&self.auth)); }
-        self.addr.stream_url(uuid, &self.user, &self.pass)
+        let profile = self.chosen_profile().map(|p| format!("profile={}", crate::address::pct(&p)));
+        if self.has_auth_code() {
+            let more = profile.map(|p| format!("&{p}")).unwrap_or_default();
+            return format!("{}?auth={}{more}", self.addr.url(&format!("/stream/channel/{uuid}")), crate::address::pct(&self.auth));
+        }
+        let base = self.addr.stream_url(uuid, &self.user, &self.pass);
+        match profile { Some(p) => format!("{base}?{p}"), None => base }
     }
     /// Recording URL. The account's password is the reliable way: old servers refuse `auth=` on `/dvrfile`.
     pub fn dvr_url(&self, uuid: &str) -> String {

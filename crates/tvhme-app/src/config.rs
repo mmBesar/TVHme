@@ -34,13 +34,15 @@ pub struct Saved {
     pub audio_langs: String,
     /// When saving on this computer keep only the preferred languages (needs ffmpeg); otherwise keep every audio track.
     pub audio_only_preferred: bool,
+    /// Stream profile name (empty = server default).
+    pub stream_profile: String,
 }
 
 impl Default for Saved {
     fn default() -> Self {
         // Catppuccin Macchiato + Mauve, HTSP on Tvheadend's usual port
         Saved { address: String::new(), htsp_port: "9982".into(), user: String::new(), pass: String::new(),
-                insecure: false, auth_code: String::new(), auto_login: false, last_tag: String::new(), last_guide_tag: String::new(), mode: 0, flavor: 2, accent: 3, player: 0, record_local: false, record_dir: String::new(), audio_langs: String::new(), audio_only_preferred: false }
+                insecure: false, auth_code: String::new(), auto_login: false, last_tag: String::new(), last_guide_tag: String::new(), mode: 0, flavor: 2, accent: 3, player: 0, record_local: false, record_dir: String::new(), audio_langs: String::new(), audio_only_preferred: false, stream_profile: String::new() }
     }
 }
 

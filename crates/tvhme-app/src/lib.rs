@@ -357,18 +357,64 @@ fn nav_items(admin: bool) -> Vec<NavItem> {
 
 
 // ---- Guide timeline -------------------------------------------------------------------------
-const PX_PER_MIN: f32 = 3.0;      // 1 hour = 180 px
-const WINDOW_MIN: i64 = 12 * 60;  // how far ahead the timeline reaches
+/// Pixels per minute at each zoom level (the middle one is the default: 1 hour = 180 px).
+const ZOOMS: [f32; 5] = [1.5, 2.25, 3.0, 4.5, 6.0];
+const DEFAULT_ZOOM: usize = 2;
 static TL_GEN: AtomicU64 = AtomicU64::new(1);
 
+thread_local! {
+    static TL_DAY: Cell<i32> = const { Cell::new(0) };               // 0 = today, 1 = tomorrow...
+    static TL_ZOOM: Cell<usize> = const { Cell::new(DEFAULT_ZOOM) };
+    static TL_WIN: Cell<i64> = const { Cell::new(12 * 60) };         // minutes shown from TL_T0
+}
+fn px() -> f32 { ZOOMS[TL_ZOOM.with(|z| z.get()).min(ZOOMS.len() - 1)] }
+fn window_min() -> i64 { TL_WIN.with(|c| c.get()) }
+/// Where the red "now" line is; off screen when the shown day is not today.
+fn now_x(now: i64) -> f32 {
+    let t0 = TL_T0.with(|c| c.get());
+    if now < t0 || now > t0 + window_min() * 60 { -10.0 } else { ((now - t0) as f32 / 60.0) * px() }
+}
+
+/// Start (a timestamp) and length in minutes of the day `day` days from today: today starts half an hour
+/// ago and shows 12 hours; later days show the whole day from local midnight.
+fn day_window(now: i64, day: i32, off: chrono::FixedOffset) -> (i64, i64) {
+    if day <= 0 { return (((now - 1800) / 1800) * 1800, 12 * 60); }
+    let local = now + off.local_minus_utc() as i64;
+    let midnight = (local.div_euclid(86400)) * 86400 - off.local_minus_utc() as i64;
+    (midnight + day as i64 * 86400, 24 * 60)
+}
+
+fn day_labels(now: i64, off: chrono::FixedOffset) -> Vec<slint::SharedString> {
+    (0..7).map(|d| match d {
+        0 => "Today".into(),
+        1 => "Tomorrow".into(),
+        _ => fmt::day_label(now + d as i64 * 86400, off).into(),
+    }).collect()
+}
+
+/// Axis, width and the "now" line for the current day and zoom; programmes of every row redrawn from the
+/// events already loaded (used when only the zoom changed).
+fn redraw_timeline(ui: &MainWindow) {
+    let (t0, win, now, off) = (TL_T0.with(|c| c.get()), window_min(), fmt::now_ts(), fmt::local_offset());
+    let ticks: Vec<Tick> = (0..=(win / 30)).map(|i| Tick { x: (i * 30) as f32 * px(), label: fmt::hm(t0 + i * 1800, off).into() }).collect();
+    ui.set_tl_ticks(ModelRc::new(VecModel::from(ticks)));
+    ui.set_tl_width(win as f32 * px());
+    ui.set_tl_now_x(now_x(now));
+    let rows: Vec<TlRow> = ui.get_tl_rows().iter().collect();
+    for r in rows {
+        let evs = CHAN_EVENTS.with(|m| m.borrow().get(r.uuid.as_str()).cloned());
+        if let Some(evs) = evs { set_tl_row(ui, r.uuid.as_str(), &evs, now); }
+    }
+}
+
 fn tl_events(evs: &[Event], t0: i64, now: i64) -> Vec<TlEvent> {
-    let end_w = t0 + WINDOW_MIN * 60;
+    let end_w = t0 + window_min() * 60;
     evs.iter().filter(|e| e.stop > t0 && e.start < end_w).map(|e| {
         let (s, en) = (e.start.max(t0), e.stop.min(end_w));
         TlEvent {
             id: e.id as i32, title: e.title.clone().into(),
-            x: ((s - t0) as f32 / 60.0) * PX_PER_MIN,
-            w: (((en - s) as f32 / 60.0) * PX_PER_MIN - 2.0).max(6.0),
+            x: ((s - t0) as f32 / 60.0) * px(),
+            w: (((en - s) as f32 / 60.0) * px() - 2.0).max(6.0),
             live: e.start <= now && now < e.stop, rec: e.dvr_state.is_some(), rtl: is_rtl(&e.title),
         }
     }).collect()
@@ -390,30 +436,33 @@ fn selected_tag(m: &ModelRc<TagItem>) -> String {
 
 /// Build the timeline for the channels of one group (empty = all) and fill it channel by channel.
 fn load_timeline(w: slint::Weak<MainWindow>, session: Shared, tag: String) {
+    let day = TL_DAY.with(|d| d.get()); // thread-local: read here on the UI thread, not inside the task
     rt().spawn(async move {
         let Some(s) = session.lock().await.clone() else { return };
         let gen = TL_GEN.fetch_add(1, Ordering::SeqCst) + 1;
         let chans: Vec<String> = s.channels.iter().filter(|c| tag.is_empty() || c.tags.contains(&tag)).map(|c| c.uuid.clone()).collect();
         let now = fmt::now_ts();
-        let t0 = ((now - 1800) / 1800) * 1800;
+        let (t0, win) = day_window(now, day, fmt::local_offset());
+        // later days are further down each channel's list of programmes: ask for more of them
+        let limit = (60 + 60 * day.max(0) as u32).min(500);
         {
             let s = s.clone(); let chans = chans.clone();
             ui_do(&w, move |ui| {
                 TL_T0.with(|c| c.set(t0));
+                TL_WIN.with(|c| c.set(win));
+                ui.set_tl_day(day);
+                ui.set_tl_days(ModelRc::new(VecModel::from(day_labels(now, fmt::local_offset()))));
                 let off = fmt::local_offset();
                 let old: Vec<TlRow> = ui.get_tl_rows().iter().collect(); // keep what is shown until the new data arrives
                 let rows: Vec<TlRow> = chans.iter().filter_map(|u| s.channels.iter().find(|c| c.uuid == *u)).map(|c| {
                     let (logo, has_logo) = logo_for(&c.uuid);
                     TlRow { uuid: c.uuid.clone().into(), name: c.name.clone().into(), initials: initials(&c.name).into(), logo, has_logo, events: old.iter().find(|r| r.uuid == c.uuid.as_str()).map(|r| r.events.clone()).unwrap_or_default() }
                 }).collect();
-                let ticks: Vec<Tick> = (0..=(WINDOW_MIN / 30)).map(|i| {
-                    let ts = t0 + i * 1800;
-                    Tick { x: (i * 30) as f32 * PX_PER_MIN, label: fmt::hm(ts, off).into() }
-                }).collect();
+                let _ = off;
                 ui.set_tl_rows(ModelRc::new(VecModel::from(rows)));
-                ui.set_tl_ticks(ModelRc::new(VecModel::from(ticks)));
-                ui.set_tl_width(WINDOW_MIN as f32 * PX_PER_MIN);
-                ui.set_tl_now_x(((now - t0) as f32 / 60.0) * PX_PER_MIN);
+                redraw_timeline(ui);
+                // a later day opens at the evening; today opens at "now"
+                ui.set_tl_start_x(if day > 0 { 18.0 * 60.0 * px() } else { 0.0 });
                 ui.set_tl_busy(!chans.is_empty());
             });
         }
@@ -423,7 +472,7 @@ fn load_timeline(w: slint::Weak<MainWindow>, session: Shared, tag: String) {
             let (s, w, gate, remaining) = (s.clone(), w.clone(), gate.clone(), remaining.clone());
             tokio::spawn(async move {
                 let _p = gate.acquire().await;
-                let res = s.api.epg_channel(&uuid, 40).await;
+                let res = s.api.epg_channel(&uuid, limit).await;
                 ui_do(&w, move |ui| {
                     if TL_GEN.load(Ordering::SeqCst) != gen { return; } // a newer timeline replaced this one
                     if let Ok(ev) = res { register(&ev); store_channel_events(&uuid, &ev); set_tl_row(ui, &uuid, &ev, now); }
@@ -689,6 +738,12 @@ pub fn run() -> Result<(), slint::PlatformError> {
                             c.user = opts.user.clone(); c.pass = opts.pass.clone(); c.insecure = opts.insecure_tls;
                             c.auth_code = opts.auth_code.clone(); c.auto_login = true;
                         });
+                        s.api.set_profile(&saved.stream_profile);
+                        let mut profiles = s.api.stream_profiles().await;
+                        if !saved.stream_profile.is_empty() && !profiles.contains(&saved.stream_profile) { s.api.set_profile(""); }
+                        profiles.insert(0, "Server default".to_string());
+                        let profile_index = profiles.iter().position(|p| *p == saved.stream_profile).unwrap_or(0) as i32;
+                        let profile_model: Vec<slint::SharedString> = profiles.into_iter().map(Into::into).collect();
                         let s2 = s.clone();
                         *session.lock().await = Some(s);
                         let _ = slint::invoke_from_event_loop(move || {
@@ -700,6 +755,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
                             load_now_next(w.clone(), s2.clone());
                             load_logos(w.clone(), s2);
                             ui.set_busy(false);
+                            ui.set_profile_names(ModelRc::new(VecModel::from(profile_model)));
+                            ui.set_profile_index(profile_index);
                             ui.set_channels(ModelRc::new(VecModel::from(items)));
                             ui.set_tags(ModelRc::new(VecModel::from(tags)));
                             ui.set_tl_rows(ModelRc::default());
@@ -745,6 +802,25 @@ pub fn run() -> Result<(), slint::PlatformError> {
             rebuild_live(&w, &session);
             ui.set_tl_rows(ModelRc::default());
             if ui.get_tab() == 1 && ui.get_guide_mode() == 0 { load_timeline(w.clone(), session.clone(), sel); }
+        }
+    });
+
+    ui.on_select_day({
+        let (w, session) = (ui.as_weak(), session.clone());
+        move |d| {
+            let Some(ui) = w.upgrade() else { return };
+            TL_DAY.with(|c| c.set(d.max(0)));
+            ui.set_tl_rows(ModelRc::default());
+            load_timeline(w.clone(), session.clone(), selected_tag(&ui.get_tags()));
+        }
+    });
+    ui.on_tl_zoom({
+        let w = ui.as_weak();
+        move |delta| {
+            let Some(ui) = w.upgrade() else { return };
+            let z = (TL_ZOOM.with(|c| c.get()) as i32 + delta).clamp(0, ZOOMS.len() as i32 - 1) as usize;
+            TL_ZOOM.with(|c| c.set(z));
+            redraw_timeline(&ui);
         }
     });
 
@@ -937,6 +1013,17 @@ pub fn run() -> Result<(), slint::PlatformError> {
     });
 
     ui.on_player_changed(|i| config::update(|c| c.player = i));
+    ui.on_profile_changed({
+        let (w, session) = (ui.as_weak(), session.clone());
+        move |i| {
+            let Some(ui) = w.upgrade() else { return };
+            let name = ui.get_profile_names().row_data(i as usize).map(|s| s.to_string()).unwrap_or_default();
+            let name = if i <= 0 { String::new() } else { name };
+            config::update({ let n = name.clone(); move |c| c.stream_profile = n.clone() });
+            let session = session.clone();
+            rt().spawn(async move { if let Some(s) = session.lock().await.as_ref() { s.api.set_profile(&name); } });
+        }
+    });
     ui.on_record_local_changed(|b| config::update(|c| c.record_local = b));
     ui.on_record_dir_changed(|d| { let d = d.trim().to_string(); config::update(move |c| c.record_dir = d.clone()); });
     ui.on_audio_langs_changed(|l| {
@@ -1107,7 +1194,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
             if ui.get_screen() != 1 { return; }
             let t0 = TL_T0.with(|c| c.get());
             refresh_now_next(&ui);
-            if t0 > 0 { ui.set_tl_now_x(((fmt::now_ts() - t0) as f32 / 60.0) * PX_PER_MIN); }
+            if t0 > 0 { ui.set_tl_now_x(now_x(fmt::now_ts())); }
             if count.is_multiple_of(6) {
                 if let Some(s) = session.try_lock().ok().and_then(|g| g.clone()) { load_now_next(w.clone(), s); }
             }

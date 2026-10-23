@@ -157,7 +157,7 @@ impl Session {
                 f.insert("channelId".into(), Value::S64(cid as i64));
                 if let Ok(r) = h.client.request("getTicket", f).await {
                     if let (Some(path), Some(ticket)) = (r.str("path"), r.str("ticket")) {
-                        return format!("{}{}?ticket={}&profile=pass", self.api.addr.base_url(), path, ticket);
+                        return format!("{}{}?ticket={}&profile={}", self.api.addr.base_url(), path, ticket, crate::address::pct(&self.api.profile_or("pass")));
                     }
                 }
             }
