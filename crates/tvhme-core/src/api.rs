@@ -50,7 +50,7 @@ pub(crate) fn classify(e: reqwest::Error, addr: &ServerAddress) -> ApiError {
     if low.contains("certificate") || low.contains("unknownissuer") || low.contains("invalid peer") {
         return ApiError::Tls(full);
     }
-    if e.is_connect() { return ApiError::Connect(format!("{}:{}", addr.host, addr.port), full); }
+    if e.is_connect() { return ApiError::Connect(addr.base_url(), full); }
     ApiError::BadResponse(full)
 }
 

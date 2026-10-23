@@ -57,6 +57,18 @@ component TButton inherits Rectangle {
     ta := TouchArea { enabled: root.enabled; clicked => { root.clicked(); } }
 }
 
+// Drawn shapes instead of font glyphs: some Android fonts show a crossed box for them.
+component PlayMark inherits Path {
+    in property <length> size: 18px;
+    width: root.size; height: root.size; viewbox-width: 10; viewbox-height: 10;
+    fill: white; commands: "M 2 0 L 10 5 L 2 10 Z";
+}
+
+component Chevron inherits Path {
+    width: 12px; height: 8px; viewbox-width: 12; viewbox-height: 8;
+    stroke: Theme.fg-dim; stroke-width: 1.6px; fill: transparent; commands: "M 1 1 L 6 6 L 11 1";
+}
+
 component TField inherits Rectangle {
     in property <string> placeholder;
     in property <InputType> kind: InputType.text;
@@ -64,6 +76,8 @@ component TField inherits Rectangle {
     callback accepted();
     callback edited();
     in property <bool> autofocus: false;
+    /// Ends text composition (phone keyboards keep the word being typed apart from the text until focus leaves).
+    public function commit() { input.clear-focus(); }
     init => { if (root.autofocus) { input.focus(); } }
     min-height: 40px; border-radius: 8px; background: Theme.card;
     border-width: 2px; border-color: input.has-focus ? Theme.acc : transparent;
@@ -79,7 +93,6 @@ component TField inherits Rectangle {
                 accepted => { root.accepted(); }
                 edited => { root.edited(); }
             }
-            TouchArea { clicked => { input.focus(); } }
         }
     }
 }
@@ -192,7 +205,7 @@ component EventRow inherits Rectangle {
             }
             VerticalLayout {
                 alignment: center; spacing: 4px; width: 92px;
-                if root.ev.state != "": Text { text: "● " + root.ev.state; color: Theme.c-bad; font-size: 12px; horizontal-alignment: right; }
+                if root.ev.state != "": Text { text: "• " + root.ev.state; color: Theme.c-bad; font-size: 12px; horizontal-alignment: right; }
                 TButton {
                     text: root.ev.dvr-uuid != "" ? "Cancel" : "Record"; height: 34px;
                     clicked => { if root.ev.dvr-uuid != "" { root.cancel(); } else { root.record(); } }
@@ -222,7 +235,7 @@ component RecRow inherits Rectangle {
             }
             VerticalLayout {
                 alignment: center; spacing: 4px; width: 92px;
-                if root.kind == 1 || root.rec.running: TButton { text: "▶ Play"; primary: true; height: 34px; clicked => { root.play(); } }
+                if root.kind == 1 || root.rec.running: TButton { text: "Play"; primary: true; height: 34px; clicked => { root.play(); } }
                 if root.rec.running: TButton { text: "Stop"; height: 34px; clicked => { root.stop(); } }
                 if !root.rec.running && root.kind == 0: TButton { text: "Cancel"; height: 34px; clicked => { root.cancel(); } }
                 if !root.rec.running && root.kind != 0: TButton { text: "Delete"; height: 34px; clicked => { root.remove(); } }
@@ -238,7 +251,7 @@ component TSelect inherits Rectangle {
     min-height: 40px; border-radius: 8px; background: Theme.card;
     border-width: fs.has-focus ? 2px : 0px; border-color: Theme.acc;
     Text { x: 12px; width: parent.width - 40px; text: root.model[root.current-index]; color: Theme.fg; vertical-alignment: center; overflow: elide; }
-    Text { x: parent.width - 28px; text: "▾"; color: Theme.fg-dim; vertical-alignment: center; }
+    Chevron { x: parent.width - 26px; y: (parent.height - self.height) / 2; }
     fs := FocusScope {
         key-pressed(e) => {
             if (e.text == Key.Return || e.text == " ") { pop.show(); return accept; }
@@ -389,6 +402,8 @@ export component MainWindow inherits Window {
     in-out property <bool> recording-local: false;
     in property <bool> can-integrate: false;
     in property <string> logo-problems;
+    in property <int> logo-problem-count;
+    in-out property <bool> logos-open: false;
     in property <bool> launcher-installed: false;
     callback toggle-launcher();
     callback record-dir-changed(string);
@@ -444,20 +459,20 @@ export component MainWindow inherits Window {
                 alignment: center; padding: 24px; spacing: 10px;
                 Text { text: "TVHme"; color: Theme.acc; font-size: 36px; font-weight: 800; horizontal-alignment: center; }
                 Text { text: "Connect to Tvheadend"; color: Theme.fg-dim; horizontal-alignment: center; }
-                TField { placeholder: "Server address"; text <=> root.host; accepted => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure, root.auth-code); } }
+                host-f := TField { placeholder: "Server address"; text <=> root.host; accepted => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure, root.auth-code); } }
                 Text { text: "e.g. 10.0.0.5:9981 or https://tv.example.com"; color: Theme.fg-dim; font-size: 12px; wrap: word-wrap; }
                 HorizontalLayout {
                     spacing: 8px;
                     Text { text: "HTSP port (signal)"; color: Theme.fg-dim; vertical-alignment: center; }
-                    TField { placeholder: "9982"; text <=> root.htsp-port; kind: InputType.number; accepted => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure, root.auth-code); } }
+                    port-f := TField { placeholder: "9982"; text <=> root.htsp-port; kind: InputType.number; accepted => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure, root.auth-code); } }
                 }
-                TField { placeholder: "Username"; text <=> root.user; accepted => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure, root.auth-code); } }
-                TField { placeholder: "Password"; kind: InputType.password; text <=> root.password; accepted => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure, root.auth-code); } }
-                TField { placeholder: "Access code (optional, instead of password)"; kind: InputType.password; text <=> root.auth-code; accepted => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure, root.auth-code); } }
+                user-f := TField { placeholder: "Username"; text <=> root.user; accepted => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure, root.auth-code); } }
+                pass-f := TField { placeholder: "Password"; kind: InputType.password; text <=> root.password; accepted => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure, root.auth-code); } }
+                code-f := TField { placeholder: "Access code (optional, instead of password)"; kind: InputType.password; text <=> root.auth-code; accepted => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure, root.auth-code); } }
                 CheckBox { text: "Allow self-signed certificate"; checked <=> root.insecure; }
                 TButton {
                     text: root.busy ? "Connecting…" : "Connect"; primary: true; enabled: !root.busy;
-                    clicked => { root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure, root.auth-code); }
+                    clicked => { host-f.commit(); port-f.commit(); user-f.commit(); pass-f.commit(); code-f.commit(); root.connect(root.host, root.htsp-port, root.user, root.password, root.insecure, root.auth-code); }
                 }
                 if root.error != "": Text { text: root.error; color: Theme.c-bad; wrap: word-wrap; horizontal-alignment: center; }
                 TButton { text: "Appearance"; clicked => { root.screen = 2; } }
@@ -557,7 +572,7 @@ export component MainWindow inherits Window {
                                             width: 76px; height: 56px;
                                             Logo { width: 76px; height: 56px; source: ch.logo; has-logo: ch.has-logo; name: ch.initials; }
                                             Rectangle { background: logo-ta.has-hover ? #00000055 : transparent; border-radius: 6px; }
-                                            Text { visible: logo-ta.has-hover; text: "▶"; color: white; font-size: 24px; horizontal-alignment: center; vertical-alignment: center; }
+                                            PlayMark { visible: logo-ta.has-hover; size: 22px; x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; }
                                             logo-ta := TouchArea { clicked => { root.play(ch.uuid); } }
                                         }
                                     }
@@ -594,7 +609,7 @@ export component MainWindow inherits Window {
                                 spacing: 8px;
                                 Text { text: root.now-playing; color: Theme.fg; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; }
                                 if root.can-record-local: TButton {
-                                    text: root.recording-local ? "■ Saving" : "● Save"; width: 96px; height: 40px; primary: root.recording-local;
+                                    text: root.recording-local ? "Saving" : "Save"; width: 96px; height: 40px; primary: root.recording-local;
                                     clicked => { root.toggle-local-record(); }
                                 }
                                 TButton { text: "Stop"; width: 72px; height: 40px; clicked => { root.stop-playback(); } }
@@ -622,7 +637,7 @@ export component MainWindow inherits Window {
                         // day buttons and zoom
                         HorizontalLayout {
                             padding-left: 12px; padding-right: 12px; spacing: 8px; height: 42px;
-                            TButton { text: "−"; width: 40px; height: 34px; clicked => { root.tl-zoom(-1); } }
+                            TButton { text: "-"; width: 40px; height: 34px; clicked => { root.tl-zoom(-1); } }
                             TButton { text: "+"; width: 40px; height: 34px; clicked => { root.tl-zoom(1); } }
                             days-flick := Flickable {
                                 content-width: days-row.preferred-width;
@@ -673,7 +688,7 @@ export component MainWindow inherits Window {
                                         // the logo plays the channel, the name opens its own guide page
                                         Logo { x: root.wide ? 4px : 6px; y: root.wide ? 10px : 3px; source: r.logo; has-logo: r.has-logo; name: r.initials; width: root.wide ? 48px : 52px; height: root.wide ? 36px : 32px; }
                                         Rectangle { x: root.wide ? 4px : 6px; y: root.wide ? 10px : 3px; width: root.wide ? 48px : 52px; height: root.wide ? 36px : 32px; background: tl-logo-ta.has-hover ? #00000055 : transparent; border-radius: 6px; }
-                                        Text { visible: tl-logo-ta.has-hover; x: root.wide ? 4px : 6px; y: root.wide ? 10px : 3px; width: root.wide ? 48px : 52px; height: root.wide ? 36px : 32px; text: "▶"; color: white; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
+                                        PlayMark { visible: tl-logo-ta.has-hover; size: 16px; x: (root.wide ? 4px : 6px) + ((root.wide ? 48px : 52px) - self.width) / 2; y: (root.wide ? 10px : 3px) + ((root.wide ? 36px : 32px) - self.height) / 2; }
                                         tl-logo-ta := TouchArea { x: root.wide ? 4px : 6px; y: root.wide ? 10px : 3px; width: root.wide ? 48px : 52px; height: root.wide ? 36px : 32px; clicked => { root.play(r.uuid); } }
                                         Text { x: root.wide ? 58px : 2px; y: root.wide ? 0px : 36px; width: parent.width - (root.wide ? 62px : 4px); height: root.wide ? 56px : 18px; text: r.name; color: tl-name-ta.has-hover ? Theme.acc : Theme.fg; font-size: root.wide ? 12px : 10px; horizontal-alignment: root.wide ? TextHorizontalAlignment.left : TextHorizontalAlignment.center; vertical-alignment: center; overflow: elide; }
                                         tl-name-ta := TouchArea { x: root.wide ? 58px : 0px; y: root.wide ? 0px : 36px; width: parent.width - (root.wide ? 58px : 0px); height: root.wide ? 56px : 20px; clicked => { root.open-channel(r.uuid); } }
@@ -713,7 +728,7 @@ export component MainWindow inherits Window {
                                     Text { text: root.chan-name; color: Theme.fg; font-size: 20px; font-weight: 700; overflow: elide; }
                                 }
                                 VerticalLayout { alignment: center; TButton { text: "Change"; width: 90px; height: 40px; clicked => { root.picker-filter = ""; root.picker-open = true; root.picker-filter-changed(""); } } }
-                                VerticalLayout { alignment: center; TButton { text: "▶ Watch"; primary: true; width: 90px; height: 40px; clicked => { root.play(root.chan-uuid); } } }
+                                VerticalLayout { alignment: center; TButton { text: "Watch"; primary: true; width: 90px; height: 40px; clicked => { root.play(root.chan-uuid); } } }
                             }
                         }
                         if root.guide-events.length == 0: Text { text: root.guide-busy ? "Loading…" : "No guide data for this channel"; color: Theme.fg-dim; horizontal-alignment: center; }
@@ -818,10 +833,13 @@ export component MainWindow inherits Window {
                 if root.tab == 5: VerticalLayout {
                     Header { title: "Settings"; }
                     ScrollView {
+                        content-width: self.visible-width;
+                        HorizontalLayout {
+                        alignment: center;
                         VerticalLayout {
-                            alignment: start;
+                            alignment: start; horizontal-stretch: 1; max-width: 640px; min-width: 0px;
                             VerticalLayout {
-                                padding: 20px; padding-bottom: 0px; spacing: 8px;
+                                padding: 20px; padding-bottom: 12px; spacing: 8px;
                                 Text { text: "Connection"; color: Theme.fg; font-size: 22px; font-weight: 700; }
                                 Text { text: root.server-info; color: Theme.fg-dim; wrap: word-wrap; font-size: 13px; }
                                 Text { text: root.me-text; color: Theme.fg-dim; wrap: word-wrap; }
@@ -850,18 +868,26 @@ export component MainWindow inherits Window {
                                     Text { text: "Audio languages (e.g. ara,eng; empty = no preference)"; color: Theme.fg-dim; font-size: 13px; }
                                     TField { placeholder: "ara,eng"; text <=> root.audio-langs; edited => { root.audio-langs-changed(root.audio-langs); } }
                                     CheckBox {
-                                        text: "Keep only these languages in saved files (needs ffmpeg)"; checked <=> root.audio-only-preferred;
+                                        text: "Keep only these languages (needs ffmpeg)"; checked <=> root.audio-only-preferred;
                                         toggled => { root.audio-only-preferred-changed(root.audio-only-preferred); }
                                     }
                                 }
                             }
                             if root.logo-problems != "": VerticalLayout {
-                                padding: 20px; padding-top: 0px; spacing: 6px;
-                                Text { text: "Channel logos that could not be loaded"; color: Theme.fg; font-size: 18px; font-weight: 700; }
-                                Text { text: root.logo-problems; color: Theme.fg-dim; font-size: 12px; wrap: word-wrap; }
+                                padding: 20px; padding-top: 8px; spacing: 6px;
+                                Text { text: "Some channel logos could not be loaded (" + root.logo-problem-count + ")"; color: Theme.fg; font-size: 16px; font-weight: 700; wrap: word-wrap; }
+                                TButton { height: 36px; text: root.logos-open ? "Hide details" : "Show details"; clicked => { root.logos-open = !root.logos-open; } }
+                                if root.logos-open: Rectangle {
+                                    height: min(logo-text.preferred-height, 160px);
+                                    clip: true;
+                                    Flickable {
+                                        content-height: logo-text.preferred-height;
+                                        logo-text := Text { width: parent.width; text: root.logo-problems; color: Theme.fg-dim; font-size: 12px; wrap: word-wrap; }
+                                    }
+                                }
                             }
                             if root.can-integrate: VerticalLayout {
-                                padding: 20px; padding-top: 0px; spacing: 8px;
+                                padding: 20px; padding-top: 8px; spacing: 8px;
                                 Text { text: "App menu"; color: Theme.fg; font-size: 22px; font-weight: 700; }
                                 Text { text: "Optional. Adds TVHme and its icon to this user's app menu so launchers and bars can show it. Nothing is installed unless you press the button."; color: Theme.fg-dim; font-size: 13px; wrap: word-wrap; }
                                 TButton { text: root.launcher-installed ? "Remove from app menu" : "Add to app menu"; clicked => { root.toggle-launcher(); } }
@@ -870,6 +896,9 @@ export component MainWindow inherits Window {
                                 mode-index <=> root.t-mode; flavor-index <=> root.t-flavor; accent-index <=> root.t-accent;
                                 apply(f, a, m) => { root.apply-theme(f, a, m); }
                             }
+                            // room under the last item so phone navigation bars never cover it
+                            Rectangle { height: 96px; }
+                        }
                         }
                     }
                 }
@@ -944,10 +973,10 @@ export component MainWindow inherits Window {
                     if root.detail.summary != "" && root.detail.summary != root.detail.subtitle: Text { text: root.detail.summary; color: Theme.fg; font-size: 15px; font-weight: 600; wrap: word-wrap; horizontal-alignment: root.detail.rtl ? TextHorizontalAlignment.right : TextHorizontalAlignment.left; }
                     if root.detail.description != "" && root.detail.description != root.detail.summary: Text { text: root.detail.description; color: Theme.fg-dim; font-size: 14px; wrap: word-wrap; horizontal-alignment: root.detail.rtl ? TextHorizontalAlignment.right : TextHorizontalAlignment.left; }
                     if root.detail.credits != "": Text { text: root.detail.credits; color: Theme.fg-dim; font-size: 13px; wrap: word-wrap; horizontal-alignment: root.detail.rtl ? TextHorizontalAlignment.right : TextHorizontalAlignment.left; }
-                    if root.detail.state != "": Text { text: "● " + root.detail.state; color: Theme.c-bad; }
+                    if root.detail.state != "": Text { text: "• " + root.detail.state; color: Theme.c-bad; }
                     HorizontalLayout {
                         spacing: 8px; height: 44px;
-                        TButton { text: "▶ Watch channel"; primary: true; clicked => { root.detail-open = false; root.play(root.detail.channel-uuid); } }
+                        TButton { text: "Watch channel"; primary: true; clicked => { root.detail-open = false; root.play(root.detail.channel-uuid); } }
                         TButton {
                             text: root.detail.dvr-uuid != "" ? "Cancel rec" : "Record";
                             clicked => { if root.detail.dvr-uuid != "" { root.detail-cancel(root.detail.dvr-uuid, root.detail.channel-uuid); } else { root.detail-record(root.detail.id, root.detail.channel-uuid); } }

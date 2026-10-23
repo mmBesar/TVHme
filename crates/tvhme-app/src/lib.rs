@@ -99,12 +99,12 @@ fn decode_logo(bytes: &[u8]) -> Result<Decoded, String> {
 static LOGO_PROBLEMS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
 fn note_logo_problem(w: &slint::Weak<MainWindow>, name: &str, why: &str) {
-    let text = {
+    let (text, count) = {
         let Ok(mut g) = LOGO_PROBLEMS.lock() else { return };
         if g.len() < 40 { g.push(format!("{name}: {why}")); }
-        g.join("\n")
+        (g.join("\n"), g.len() as i32)
     };
-    ui_do(w, move |ui| ui.set_logo_problems(text.into()));
+    ui_do(w, move |ui| { ui.set_logo_problems(text.into()); ui.set_logo_problem_count(count); });
 }
 
 /// Fetch every channel logo in the background (a few at a time) and put each on screen as it arrives.
@@ -112,7 +112,7 @@ fn note_logo_problem(w: &slint::Weak<MainWindow>, name: &str, why: &str) {
 /// error, so a failure is retried a couple of times before it is reported in Settings.
 fn load_logos(w: slint::Weak<MainWindow>, s: Arc<Session>) {
     if let Ok(mut g) = LOGO_PROBLEMS.lock() { g.clear(); }
-    ui_do(&w, |ui| ui.set_logo_problems("".into()));
+    ui_do(&w, |ui| { ui.set_logo_problems("".into()); ui.set_logo_problem_count(0); });
     rt().spawn(async move {
         let gate = Arc::new(tokio::sync::Semaphore::new(6));
         for c in s.channels.iter().filter(|c| c.icon.is_some()) {
