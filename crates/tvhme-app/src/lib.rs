@@ -57,11 +57,22 @@ fn now_next(evs: &[Event], t: i64) -> (Option<&Event>, Option<&Event>) {
     (now, next)
 }
 
+/// Title with what makes an episode recognisable: "Title - episode title (S01E02)". Subtitles in many
+/// guides hold the episode name and number, so the Live page and the timeline show them too.
+fn with_subtitle(e: &Event) -> String {
+    let mut t = e.title.trim().to_string();
+    let sub = e.subtitle.trim();
+    if !sub.is_empty() && sub != t { t.push_str(" - "); t.push_str(sub); }
+    let ep = e.episode.trim();
+    if !ep.is_empty() && !t.contains(ep) { t.push_str(&format!(" ({ep})")); }
+    t
+}
+
 fn apply_now_next(row: &mut ChannelItem, evs: &[Event], t: i64, off: chrono::FixedOffset) {
     let (now, next) = now_next(evs, t);
-    row.now_title = now.map(|e| e.title.clone()).unwrap_or_default().into();
+    row.now_title = now.map(with_subtitle).unwrap_or_default().into();
     row.now_progress = now.map(|e| ((t - e.start) as f32 / (e.stop - e.start).max(1) as f32).clamp(0.0, 1.0)).unwrap_or(0.0);
-    row.next_title = next.map(|e| e.title.clone()).unwrap_or_default().into();
+    row.next_title = next.map(with_subtitle).unwrap_or_default().into();
     row.next_time = next.map(|e| fmt::hm(e.start, off)).unwrap_or_default().into();
     row.now_id = now.map_or(0, |e| e.id as i32);
     row.next_id = next.map_or(0, |e| e.id as i32);
@@ -420,7 +431,7 @@ fn tl_events(evs: &[Event], t0: i64, now: i64) -> Vec<TlEvent> {
     evs.iter().filter(|e| e.stop > t0 && e.start < end_w).map(|e| {
         let (s, en) = (e.start.max(t0), e.stop.min(end_w));
         TlEvent {
-            id: e.id as i32, title: e.title.clone().into(),
+            id: e.id as i32, title: with_subtitle(e).into(),
             x: ((s - t0) as f32 / 60.0) * px(),
             w: (((en - s) as f32 / 60.0) * px() - 2.0).max(6.0),
             live: e.start <= now && now < e.stop, rec: e.dvr_state.is_some(), rtl: is_rtl(&e.title),
@@ -1307,6 +1318,15 @@ mod tests {
         assert!(n.is_none() && x.unwrap().title == "A");
         let (n, x) = now_next(&e, 399);
         assert!(n.is_some() && x.is_none());
+    }
+    #[test]
+    fn subtitle_and_episode_join_the_title() {
+        let mut e = tvhme_core::api::Event { title: "Show".into(), ..Default::default() };
+        assert_eq!(with_subtitle(&e), "Show");
+        e.subtitle = "The Pilot".into(); e.episode = "S01E01".into();
+        assert_eq!(with_subtitle(&e), "Show - The Pilot (S01E01)");
+        e.subtitle = "S01E01 The Pilot".into();
+        assert_eq!(with_subtitle(&e), "Show - S01E01 The Pilot");
     }
     #[test]
     fn initials_for_logoless_channels() {

@@ -555,6 +555,13 @@ export component MainWindow inherits Window {
                     }
                     Rectangle {
                         vertical-stretch: 1;
+                        SwipeGestureHandler {
+                            handle-swipe-left: true; handle-swipe-right: true;
+                            swiped => {
+                                let dx = self.current-position.x - self.pressed-position.x;
+                                let dy = self.current-position.y - self.pressed-position.y;
+                                if (abs(dx) > 60px && abs(dx) > abs(dy) * 1.5) { root.swipe-tag(dx < 0px ? 1 : -1); }
+                            }
                     ListView {
                         for ch in root.channels: Rectangle {
                             height: 104px;
@@ -608,14 +615,6 @@ export component MainWindow inherits Window {
                             }
                         }
                     }
-                        // swipe sideways to move to the neighbouring group
-                        SwipeGestureHandler {
-                            handle-swipe-left: true; handle-swipe-right: true;
-                            swiped => {
-                                let dx = self.current-position.x - self.pressed-position.x;
-                                let dy = self.current-position.y - self.pressed-position.y;
-                                if (abs(dx) > 60px && abs(dx) > abs(dy) * 1.5) { root.swipe-tag(dx < 0px ? 1 : -1); }
-                            }
                         }
                     }
                     if root.now-playing != "": Rectangle {
@@ -801,6 +800,16 @@ export component MainWindow inherits Window {
                     if root.rec-note != "": Text { text: root.rec-note; color: Theme.fg-dim; horizontal-alignment: center; wrap: word-wrap; }
                     Rectangle {
                         vertical-stretch: 1;
+                        SwipeGestureHandler {
+                            handle-swipe-left: true; handle-swipe-right: true;
+                            swiped => {
+                                let dx = self.current-position.x - self.pressed-position.x;
+                                let dy = self.current-position.y - self.pressed-position.y;
+                                if (abs(dx) > 60px && abs(dx) > abs(dy) * 1.5) {
+                                    let k = max(0, min(2, root.rec-kind + (dx < 0px ? 1 : -1)));
+                                    if (k != root.rec-kind) { root.rec-kind = k; root.load-recordings(k); }
+                                }
+                            }
                     ListView {
                         for r in root.recordings: VerticalLayout {
                             if r.header: Rectangle {
@@ -816,16 +825,6 @@ export component MainWindow inherits Window {
                             }
                         }
                     }
-                        SwipeGestureHandler {
-                            handle-swipe-left: true; handle-swipe-right: true;
-                            swiped => {
-                                let dx = self.current-position.x - self.pressed-position.x;
-                                let dy = self.current-position.y - self.pressed-position.y;
-                                if (abs(dx) > 60px && abs(dx) > abs(dy) * 1.5) {
-                                    let k = max(0, min(2, root.rec-kind + (dx < 0px ? 1 : -1)));
-                                    if (k != root.rec-kind) { root.rec-kind = k; root.load-recordings(k); }
-                                }
-                            }
                         }
                     }
                 }

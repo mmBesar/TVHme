@@ -57,7 +57,14 @@ jobs:
           export ANDROID_NDK_ROOT="$ANDROID_NDK_LATEST_HOME"
           export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
           export ANDROID_SDK_ROOT="$ANDROID_HOME"
-          cargo apk build --release -p tvhme-app --lib --target ${{ matrix.target }}
+          # Skia's build downloads its sources from googlesource.com, which sometimes answers 429 (too many
+          # requests) to shared CI machines. That says nothing about our code, so wait and try again.
+          for attempt in 1 2 3 4; do
+            if cargo apk build --release -p tvhme-app --lib --target ${{ matrix.target }}; then exit 0; fi
+            echo "::warning::build attempt $attempt failed, retrying after a pause"
+            sleep $((attempt * 120))
+          done
+          exit 1
       - name: Collect APK
         run: |
           mkdir -p dist
